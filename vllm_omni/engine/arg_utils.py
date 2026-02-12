@@ -62,6 +62,7 @@ class OmniEngineArgs(EngineArgs):
             If None, default processing is used.
         stage_connector_spec: Extra configuration for stage connector
         async_chunk: If set to True, perform async chunk
+        worker_type: Model Type, e.g., "ar" or "generation"
     """
 
     stage_id: int = 0
@@ -73,6 +74,7 @@ class OmniEngineArgs(EngineArgs):
     stage_connector_spec: dict[str, Any] = field(default_factory=dict)
     async_chunk: bool = False
     omni_kv_config: dict | None = None
+    worker_type: str | None = None
 
     def __post_init__(self) -> None:
         load_omni_general_plugins()
@@ -217,6 +219,7 @@ class AsyncOmniEngineArgs(AsyncEngineArgs):
             Used to route outputs to appropriate processors (e.g., "image",
             "audio", "latents"). If None, output type is inferred.
         stage_connector_spec: Extra configuration for stage connector
+        worker_type: Model Type, e.g., "ar" or "generation"
     """
 
     stage_id: int = 0
@@ -228,6 +231,7 @@ class AsyncOmniEngineArgs(AsyncEngineArgs):
     stage_connector_spec: dict[str, Any] = field(default_factory=dict)
     async_chunk: bool = False
     omni_kv_config: dict | None = None
+    worker_type: str | None = None
 
     def __post_init__(self) -> None:
         load_omni_general_plugins()
