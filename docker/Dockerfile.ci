@@ -26,7 +26,10 @@ RUN uv pip uninstall --system nvidia-cublas-cu12
 # Use bash -c so that $(python3 -c ...) is expanded inside the container.
 RUN uv pip install --system --no-cache-dir ".[dev]"
 
-RUN pip install --upgrade --force-reinstall "pplx_kernels"
+# pplx_kernels is optional; the base image may already ship a version.
+# Reinstall attempt may fail if no compatible wheel exists for the current
+# PyTorch/CUDA combination – allow the build to continue regardless.
+RUN pip install --upgrade --force-reinstall "pplx_kernels" || true
 
 RUN /bin/bash -c 'FLASHINFER_CUDA_TAG="$(python3 -c "import torch; print((torch.version.cuda or \"12.4\").replace(\".\", \"\"))")" && \
     uv pip install --system --upgrade --force-reinstall \
