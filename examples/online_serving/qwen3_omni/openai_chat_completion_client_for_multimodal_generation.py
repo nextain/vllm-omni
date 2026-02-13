@@ -335,14 +335,13 @@ query_map = {
 def run_multimodal_generation(args, client: OpenAI) -> None:
     model_name = args.model
     thinker_sampling_params = {
-        "temperature": 0.2,
+        "temperature": 0.4,  # Deterministic
         "top_p": 0.9,
         "top_k": 1,
         "max_tokens": 16384,
         "repetition_penalty": 1.05,
-        "logit_bias": {},
-        "seed": SEED,
         "stop_token_ids": [151645],  # Qwen EOS token <|im_end|>
+        "seed": SEED,
     }
 
     # Sampling parameters for Talker stage (codec generation)
