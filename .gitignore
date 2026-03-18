@@ -156,6 +156,7 @@ cython_debug/
 # Claude
 CLAUDE.md
 .claude/
+.agents/
 
 # Codex
 AGENTS.md
