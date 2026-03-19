@@ -57,6 +57,27 @@ _OMNI_MODELS = {
         "cosyvoice3",
         "CosyVoice3Model",
     ),
+    # MiniCPM-o 4.5 (Thinker + Talker + Code2Wav)
+    "MiniCPMOForConditionalGeneration": (
+        "minicpm_o",
+        "minicpm_o",
+        "MiniCPMOForConditionalGeneration",
+    ),
+    "MiniCPMOThinkerModel": (
+        "minicpm_o",
+        "minicpm_o_thinker",
+        "MiniCPMOThinkerForConditionalGeneration",
+    ),
+    "MiniCPMOTalkerModel": (
+        "minicpm_o",
+        "minicpm_o_talker",
+        "MiniCPMOTalkerForConditionalGeneration",
+    ),
+    "MiniCPMOCode2Wav": (
+        "minicpm_o",
+        "minicpm_o_code2wav",
+        "MiniCPMOCode2Wav",
+    ),
     "MammothModa2Qwen2ForCausalLM": (
         "mammoth_moda2",
         "mammoth_moda2",
