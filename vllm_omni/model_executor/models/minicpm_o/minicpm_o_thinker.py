@@ -21,7 +21,7 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-from transformers import WhisperConfig
+from transformers import Qwen3Config, WhisperConfig
 from transformers.models.siglip.configuration_siglip import SiglipVisionConfig
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
@@ -31,6 +31,7 @@ from vllm.model_executor.models.interfaces import (
     SupportsPP,
 )
 from vllm.model_executor.models.module_mapping import MultiModelKeys
+from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 from vllm.model_executor.models.siglip import SiglipVisionTransformer
 from vllm.model_executor.models.utils import (
     AutoWeightsLoader,
@@ -352,9 +353,6 @@ class MiniCPMOThinkerForConditionalGeneration(
             )
 
         # LLM backbone (Qwen3ForCausalLM)
-        from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
-        from transformers import Qwen3Config
-
         qwen3_cfg = Qwen3Config(
             hidden_size=config.hidden_size,
             num_hidden_layers=config.num_hidden_layers,

@@ -115,6 +115,7 @@ class TestMiniCPMOConfig:
         from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import MiniCPMVSliceConfig
 
         assert isinstance(cfg.slice_config, MiniCPMVSliceConfig)
+        assert cfg.slice_config.max_slice_nums == 9  # MiniCPMVSliceConfig default
 
     def test_query_num(self, cfg):
         assert cfg.query_num == 64

@@ -249,7 +249,7 @@ class MiniCPMOConfig(PretrainedConfig):
         self.vision_batch_size = vision_batch_size
 
         if slice_config is None:
-            self.slice_config = MiniCPMVSliceConfig(max_slice_nums=1)
+            self.slice_config = MiniCPMVSliceConfig()
         else:
             self.slice_config = MiniCPMVSliceConfig(**slice_config)
         self.slice_mode = True
