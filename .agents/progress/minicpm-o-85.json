@@ -1,0 +1,46 @@
+{
+  "issue": "#85 MiniCPM-o 4.5 vllm-omni support",
+  "issue_url": "https://github.com/nextain/vllm-omni/issues/85",
+  "current_phase": "report",
+  "gates_cleared": ["understand", "scope", "plan", "build", "review", "e2e_test", "post_test_review", "sync", "sync_verify"],
+  "current_task": "Report to user — ready for Naia integration",
+  "key_decisions": [
+    "3-stage pipeline: Thinker→Talker→Code2Wav (qwen3_omni 패턴 따름)",
+    "WeightsMapper 키 이름: tts.emb_code.0.→codec_embedding., tts.projector_semantic.→text_projection., tts.projector_spk.→hidden_projection.",
+    "MiniCPMOTalkerLLM vocab_size=32000 (tts.model.embed_tokens weight shape 기준)",
+    "codec_embedding은 별도 nn.Embedding(6562,768) — language_model.embed_tokens와 분리",
+    "tts.head_code.0 spectral_norm: original1=weight matrix, original0=singular value (skip)",
+    "No PR — 리뷰 안받음",
+    "L1: 62/62 PASS (local + RunPod), L2: 7/7 PASS (RunPod RTX3090, actual HF weights)",
+    "Phase 6: thinker forward returns (hidden, text_embeds) tuple",
+    "make_omni_output: thinker_hidden_states + thinker_text_embeds in multimodal_outputs (per-request accumulated by output_processor.py across all decode steps via list→torch.cat)",
+    "talker_preprocess: hidden_text_merge = project_thinker_outputs + codec_embedding; trailing_text_hidden queue for decode steps; chunked prefill via num_processed_tokens tracking",
+    "pipeline.yaml: 3 stages, thinker2talker + talker2code2wav custom_process_input_func",
+    "stage_config.py PIPELINE_MODELS: 'minicpmo' → 'minicpm_o' auto-loads pipeline.yaml"
+  ],
+  "l2_test_findings": {
+    "tts.emb_code.0.weight": "[6562, 768]",
+    "tts.model.embed_tokens.weight": "[32000, 768]",
+    "tts.projector_semantic.linear1.weight": "[768, 4096]",
+    "tts.projector_spk.linear1.weight": "[768, 4096]",
+    "tts.head_code.0.parametrizations.weight.original1": "[6562, 768]"
+  },
+  "config_defaults_fixed": {
+    "llm_dim": "2560→4096",
+    "num_audio_tokens": "4097→6562",
+    "num_text_tokens": "21178→152064",
+    "audio_bos_token_id": "21132→151687",
+    "text_eos_token_id": "21133→151692"
+  },
+  "commits": [
+    "feat(minicpm_o): initial 3-stage pipeline implementation",
+    "fix(minicpm_o): correct WeightsMapper keys and config defaults from L2 tests",
+    "[Model][MiniCPM-o] Phase 6: Stage input processors and pipeline wiring (904b5c2)"
+  ],
+  "runpod": {
+    "pod_id": "ws06tgdd2oa651",
+    "ssh": "root@92.154.57.65:15237",
+    "model_dir": "/workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots/44151b35f1b232a280bda5a87ea1a7575d5433fc",
+    "python": "python3 (system)"
+  }
+}
