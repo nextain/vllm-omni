@@ -29,16 +29,16 @@ class TestMiniCPMTTSConfig:
         assert cfg.num_hidden_layers == 20
 
     def test_default_num_audio_tokens(self, cfg):
-        """s3tokenizer vocab is ~4097 in defaults (may differ from CosyVoice)."""
-        assert cfg.num_audio_tokens == 4097
+        """CosyVoice3 codec vocab: 6561 tokens + 1 EOS = 6562."""
+        assert cfg.num_audio_tokens == 6562
 
     def test_default_num_vq(self, cfg):
         """MiniCPM-o uses num_vq=1 (single-layer codec)."""
         assert cfg.num_vq == 1
 
     def test_llm_dim(self, cfg):
-        """Default llm_dim matches MiniCPM-o 4.5's Qwen3 hidden size."""
-        assert cfg.llm_dim == 2560
+        """llm_dim matches MiniCPM-o 4.5's Qwen3-7B thinker hidden size."""
+        assert cfg.llm_dim == 4096
 
     def test_condition_type(self, cfg):
         assert cfg.condition_type == "hidden_text_merge"

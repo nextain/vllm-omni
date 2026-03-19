@@ -48,8 +48,10 @@ def _build_llama_config(tts_config: MiniCPMTTSConfig) -> LlamaConfig:
         intermediate_size=tts_config.intermediate_size,
         hidden_act=tts_config.hidden_act,
         max_position_embeddings=tts_config.max_position_embeddings,
-        # num_audio_tokens is the codec vocab size for the talker's AR generation
-        vocab_size=tts_config.num_audio_tokens,
+        # LlamaModel backbone uses its own 32000-token text vocab
+        # (tts.model.embed_tokens.weight shape [32000, 768] in HF checkpoint).
+        # Codec tokens (num_audio_tokens) are handled by codec_embedding separately.
+        vocab_size=32000,
     )
 
 
@@ -76,14 +78,14 @@ class MiniCPMOTalkerResizeMLP(nn.Module):
 
 
 class MiniCPMOTalkerLLM(LlamaForCausalLM):
-    """Llama AR backbone for MiniCPM-o Talker with codec-token embedding.
+    """Llama AR backbone for MiniCPM-o Talker.
 
-    Subclasses LlamaForCausalLM but:
-    - Replaces embed_tokens (text) with plain nn.Embedding over the audio
-      codec vocabulary.  This keeps LlamaModel.embed_input_ids() working
-      (it still calls self.embed_tokens internally).
-    - Removes the text LM head (unused; codec_head lives in the parent
-      MiniCPMOTalkerForConditionalGeneration).
+    Subclasses LlamaForCausalLM but removes the text LM head (unused;
+    codec_head lives in the parent MiniCPMOTalkerForConditionalGeneration).
+
+    The model's embed_tokens (vocab=32000) is loaded from ``tts.model.*``
+    in the HF checkpoint but is NOT called during inference — codec_embedding
+    in the parent class is used instead, fed as ``inputs_embeds``.
     """
 
     def __init__(
@@ -103,17 +105,6 @@ class MiniCPMOTalkerLLM(LlamaForCausalLM):
             del self.lm_head
         if hasattr(self, "logits_processor"):
             del self.logits_processor
-
-        # Replace VocabParallelEmbedding (text) with nn.Embedding over codec
-        # vocabulary. LlamaModel.embed_input_ids() delegates to embed_tokens,
-        # so replacing in-place keeps that path working without modifications.
-        self.model.embed_tokens = nn.Embedding(
-            tts_config.num_audio_tokens,
-            tts_config.hidden_size,
-        )
-
-    def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
-        return self.model.embed_tokens(input_ids)
 
 
 class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
@@ -135,23 +126,21 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
                    + hidden_projection(thinker_hidden_states)
 
     Weight key mapping from HuggingFace checkpoint (tts.* prefix):
-      tts.model.*         → language_model.model.*
-      tts.emb.*           → language_model.model.codec_embedding.*
-      tts.head_code.0.*   → codec_head.*
-      tts.llm_embed.*     → text_projection.*
-      tts.llm_header.*    → hidden_projection.*
-      tts.*               → (catch-all strip)
-
-    Note: Exact HF key names are verified in Phase 7 (L1 tests).
+      tts.model.*              → language_model.model.*
+      tts.emb_code.0.*         → codec_embedding.*
+      tts.head_code.0.*        → codec_head.*  (spectral norm resolved in load_weights)
+      tts.projector_semantic.* → text_projection.*
+      tts.projector_spk.*      → hidden_projection.*
+      tts.*                    → (catch-all strip)
     """
 
     hf_to_vllm_mapper = WeightsMapper(
         orig_to_new_prefix={
             "tts.model.": "language_model.model.",
-            "tts.emb.": "language_model.model.embed_tokens.",
+            "tts.emb_code.0.": "codec_embedding.",
             "tts.head_code.0.": "codec_head.",
-            "tts.llm_embed.": "text_projection.",
-            "tts.llm_header.": "hidden_projection.",
+            "tts.projector_semantic.": "text_projection.",
+            "tts.projector_spk.": "hidden_projection.",
             "tts.": "",
         }
     )
@@ -168,19 +157,28 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         self.config = tts_config
 
         # Projection: thinker text embeddings → talker hidden dim
+        # (tts.projector_semantic.* in HF checkpoint)
         self.text_projection = MiniCPMOTalkerResizeMLP(
             llm_dim=tts_config.llm_dim,
             intermediate_size=tts_config.llm_intermediate_size,
             hidden_size=tts_config.hidden_size,
         )
         # Projection: thinker hidden states → talker hidden dim
+        # (tts.projector_spk.* in HF checkpoint)
         self.hidden_projection = MiniCPMOTalkerResizeMLP(
             llm_dim=tts_config.llm_dim,
             intermediate_size=tts_config.llm_intermediate_size,
             hidden_size=tts_config.hidden_size,
         )
 
-        # Llama AR backbone with codec token embedding
+        # Codec token embedding for AR decoding steps
+        # (tts.emb_code.0.* in HF checkpoint; separate from language_model.embed_tokens)
+        self.codec_embedding = nn.Embedding(
+            tts_config.num_audio_tokens,
+            tts_config.hidden_size,
+        )
+
+        # Llama AR backbone (embed_tokens vocab=32000; loaded but not called during inference)
         self.language_model = MiniCPMOTalkerLLM(
             vllm_config=vllm_config,
             tts_config=tts_config,
@@ -238,8 +236,8 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         return conditioning
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
-        """Embed codec token IDs (used during AR decoding steps)."""
-        return self.language_model.embed_input_ids(input_ids)
+        """Embed codec token IDs via codec_embedding (used during AR decoding)."""
+        return self.codec_embedding(input_ids)
 
     def forward(
         self,
@@ -280,9 +278,38 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         return self.codec_head(hidden_states)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        prefix_map = self.hf_to_vllm_mapper.orig_to_new_prefix
+
+        def _preprocess(
+            ws: Iterable[tuple[str, torch.Tensor]],
+        ) -> Iterable[tuple[str, torch.Tensor]]:
+            """Apply prefix mapper then resolve spectral-norm parametrizations.
+
+            ``tts.head_code.0`` uses ``torch.nn.utils.spectral_norm``, which
+            stores the weight as ``parametrizations.weight.original1`` (the
+            actual weight matrix) and ``parametrizations.weight.original0``
+            (the singular-value vector, not needed for inference).  We unwrap
+            ``original1`` → ``.weight`` and discard ``original0``.
+            """
+            for orig_name, param in ws:
+                # Apply prefix mapping
+                new_name = orig_name
+                for orig_pfx, new_pfx in prefix_map.items():
+                    if orig_name.startswith(orig_pfx):
+                        new_name = new_pfx + orig_name[len(orig_pfx):]
+                        break
+                # Resolve spectral-norm storage format
+                if new_name.endswith(".parametrizations.weight.original1"):
+                    base = new_name[: -len(".parametrizations.weight.original1")]
+                    yield f"{base}.weight", param
+                elif ".parametrizations.weight.original0" in new_name:
+                    continue  # singular-value vector; not needed at inference
+                else:
+                    yield new_name, param
+
         loader = AutoWeightsLoader(
             self,
             # Thinker and Code2Wav weights are handled by other stages
             skip_prefixes=["thinker.", "code2wav."],
         )
-        return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+        return loader.load_weights(_preprocess(weights))

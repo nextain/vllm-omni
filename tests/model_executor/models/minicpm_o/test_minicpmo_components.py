@@ -221,30 +221,37 @@ class TestTalkerWeightsMapper:
 
     def test_required_prefixes_present(self, mapper):
         keys = list(mapper.orig_to_new_prefix.keys())
-        for prefix in ("tts.model.", "tts.emb.", "tts.head_code.0.", "tts.llm_embed.", "tts.llm_header.", "tts."):
+        for prefix in (
+            "tts.model.",
+            "tts.emb_code.0.",
+            "tts.head_code.0.",
+            "tts.projector_semantic.",
+            "tts.projector_spk.",
+            "tts.",
+        ):
             assert prefix in keys, f"Missing prefix: {prefix!r}"
 
     def test_specific_before_catchall(self, mapper):
-        """tts.model. and other specific prefixes must precede catch-all tts."""
+        """All specific prefixes must precede the catch-all tts."""
         keys = list(mapper.orig_to_new_prefix.keys())
         catchall_idx = keys.index("tts.")
-        for specific in ("tts.model.", "tts.emb.", "tts.head_code.0."):
+        for specific in ("tts.model.", "tts.emb_code.0.", "tts.head_code.0."):
             assert keys.index(specific) < catchall_idx, (
                 f"{specific!r} must appear before 'tts.' (catch-all)"
             )
 
-    def test_tts_emb_maps_to_embed_tokens(self, mapper):
-        """tts.emb. must map to embed_tokens (not codec_embedding — fixed)."""
-        assert mapper.orig_to_new_prefix["tts.emb."] == "language_model.model.embed_tokens."
+    def test_tts_emb_code_maps_to_codec_embedding(self, mapper):
+        """tts.emb_code.0. must map to codec_embedding (CosyVoice3 codec vocab)."""
+        assert mapper.orig_to_new_prefix["tts.emb_code.0."] == "codec_embedding."
 
     def test_tts_head_code_maps_to_codec_head(self, mapper):
         assert mapper.orig_to_new_prefix["tts.head_code.0."] == "codec_head."
 
-    def test_tts_llm_embed_maps_to_text_projection(self, mapper):
-        assert mapper.orig_to_new_prefix["tts.llm_embed."] == "text_projection."
+    def test_tts_projector_semantic_maps_to_text_projection(self, mapper):
+        assert mapper.orig_to_new_prefix["tts.projector_semantic."] == "text_projection."
 
-    def test_tts_llm_header_maps_to_hidden_projection(self, mapper):
-        assert mapper.orig_to_new_prefix["tts.llm_header."] == "hidden_projection."
+    def test_tts_projector_spk_maps_to_hidden_projection(self, mapper):
+        assert mapper.orig_to_new_prefix["tts.projector_spk."] == "hidden_projection."
 
 
 # ---------------------------------------------------------------------------

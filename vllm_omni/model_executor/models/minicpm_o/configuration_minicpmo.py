@@ -49,7 +49,7 @@ class MiniCPMTTSConfig(PretrainedConfig):
     def __init__(
         self,
         # LLM interface
-        llm_dim: int = 2560,
+        llm_dim: int = 4096,
         llm_intermediate_size: int = 768,
         llm_down_scale: bool = False,
         llm_dim_model_base: int = 256,
@@ -64,12 +64,12 @@ class MiniCPMTTSConfig(PretrainedConfig):
         num_hidden_layers: int = 20,
         max_position_embeddings: int = 4096,
         # Audio codec
-        num_audio_tokens: int = 4097,
-        num_text_tokens: int = 21178,
+        num_audio_tokens: int = 6562,
+        num_text_tokens: int = 152064,
         num_mel_bins: int = 100,
         num_vq: int = 1,
-        audio_bos_token_id: int = 21132,
-        text_eos_token_id: int = 21133,
+        audio_bos_token_id: int = 151687,
+        text_eos_token_id: int = 151692,
         audio_tokenizer_type: str = "wavtokenizer",
         audio_tokenizer_sample_rate: int = 24000,
         # Conditioning
