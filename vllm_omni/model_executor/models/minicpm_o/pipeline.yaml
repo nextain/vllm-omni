@@ -1,0 +1,41 @@
+# MiniCPM-o 4.5 pipeline definition.
+# Auto-loaded by StageConfigFactory when model_type == "minicpmo".
+# Users can override runtime params (devices, gpu_memory_utilization, etc.)
+# via CLI or per-stage overrides (--stage-0-gpu-memory-utilization 0.9).
+#
+# Stage 0: Thinker  — SigLIP2 + Whisper + Qwen3-7B → text hidden states
+# Stage 1: Talker   — MiniCPMTTS Llama AR → audio codec tokens (num_vq=1)
+# Stage 2: Code2Wav — CosyVoice3 flow-matching DiT + HiFi-GAN → waveform
+
+model_type: minicpmo
+async_chunk: false
+
+stages:
+  - stage_id: 0
+    model_stage: thinker
+    stage_type: llm
+    input_sources: []
+    worker_type: ar
+    scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+    final_output: true
+    final_output_type: text
+    is_comprehension: false
+
+  - stage_id: 1
+    model_stage: talker
+    stage_type: llm
+    input_sources: [0]
+    worker_type: ar
+    scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+    custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
+    final_output: false
+
+  - stage_id: 2
+    model_stage: code2wav
+    stage_type: llm
+    input_sources: [1]
+    worker_type: generation
+    scheduler_cls: vllm_omni.core.sched.omni_generation_scheduler.OmniGenerationScheduler
+    custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
+    final_output: true
+    final_output_type: audio

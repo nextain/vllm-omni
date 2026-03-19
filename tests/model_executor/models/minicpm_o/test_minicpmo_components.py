@@ -330,3 +330,100 @@ class TestMiniCPMOCode2WavInstantiation:
             model.flow_model.config.sample_rate / model.flow_model.input_frame_rate
         )
         assert expected == 960
+
+
+# ---------------------------------------------------------------------------
+# Phase 6: Thinker forward returns (hidden_states, inputs_embeds) tuple
+# ---------------------------------------------------------------------------
+
+
+class TestThinkerForwardTuple:
+    """Verify that the thinker forward returns a 2-tuple for talker conditioning."""
+
+    @pytest.fixture
+    def thinker(self):
+        from unittest.mock import MagicMock, patch
+        import torch.nn as nn
+
+        from vllm_omni.model_executor.models.minicpm_o.minicpm_o_thinker import (
+            MiniCPMOThinkerForConditionalGeneration,
+        )
+        from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import MiniCPMOConfig
+
+        # Build a tiny thinker with a stubbed language_model
+        cfg = MiniCPMOConfig()
+        vllm_config = MagicMock()
+        vllm_config.model_config.hf_config = cfg
+        vllm_config.model_config.dtype = torch.float32
+        vllm_config.quant_config = None
+
+        thinker = MiniCPMOThinkerForConditionalGeneration.__new__(
+            MiniCPMOThinkerForConditionalGeneration
+        )
+        # Stub embed_input_ids and language_model
+        seq = 4
+        thinker_hidden = 8
+        thinker.language_model = MagicMock(
+            return_value=torch.randn(seq, thinker_hidden)
+        )
+        thinker.embed_input_ids = MagicMock(
+            return_value=torch.randn(seq, thinker_hidden)
+        )
+        return thinker, seq, thinker_hidden
+
+    def test_forward_returns_tuple(self, thinker):
+        """forward() must return a 2-tuple (hidden_states, inputs_embeds)."""
+        thinker_obj, seq, hidden = thinker
+        input_ids = torch.zeros(seq, dtype=torch.long)
+        positions = torch.arange(seq)
+
+        out = thinker_obj.forward(input_ids=input_ids, positions=positions)
+
+        assert isinstance(out, tuple), "forward() should return a tuple"
+        assert len(out) == 2, "tuple must have exactly 2 elements"
+
+    def test_forward_tuple_shapes(self, thinker):
+        """Both tuple elements must have shape [seq, hidden_dim]."""
+        thinker_obj, seq, hidden = thinker
+        input_ids = torch.zeros(seq, dtype=torch.long)
+        positions = torch.arange(seq)
+
+        hidden_states, inputs_embeds = thinker_obj.forward(
+            input_ids=input_ids, positions=positions
+        )
+
+        assert hidden_states.shape == (seq, hidden)
+        assert inputs_embeds.shape == (seq, hidden)
+
+    def test_forward_builds_embeds_when_none(self, thinker):
+        """When inputs_embeds=None, thinker builds and returns them."""
+        thinker_obj, seq, hidden = thinker
+        input_ids = torch.zeros(seq, dtype=torch.long)
+        positions = torch.arange(seq)
+
+        _, returned_embeds = thinker_obj.forward(
+            input_ids=input_ids,
+            positions=positions,
+            inputs_embeds=None,
+        )
+
+        # embed_input_ids should have been called once
+        thinker_obj.embed_input_ids.assert_called_once()
+        assert returned_embeds is not None
+
+    def test_forward_passes_provided_embeds(self, thinker):
+        """When inputs_embeds is provided, it is passed through and returned."""
+        thinker_obj, seq, hidden = thinker
+        input_ids = torch.zeros(seq, dtype=torch.long)
+        positions = torch.arange(seq)
+        provided_embeds = torch.randn(seq, hidden)
+
+        _, returned_embeds = thinker_obj.forward(
+            input_ids=input_ids,
+            positions=positions,
+            inputs_embeds=provided_embeds,
+        )
+
+        # embed_input_ids should NOT have been called (embeds already provided)
+        thinker_obj.embed_input_ids.assert_not_called()
+        assert returned_embeds is provided_embeds

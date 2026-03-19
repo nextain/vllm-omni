@@ -263,7 +263,7 @@ class MiniCPMOForConditionalGeneration(
 
     def make_omni_output(
         self,
-        model_outputs: torch.Tensor | list[torch.Tensor] | OmniOutput,
+        model_outputs: torch.Tensor | tuple | list[torch.Tensor] | OmniOutput,
         **kwargs: object,
     ) -> OmniOutput:
         """Wrap model outputs into OmniOutput for downstream pipeline."""
@@ -271,10 +271,24 @@ class MiniCPMOForConditionalGeneration(
             return model_outputs
 
         if self.model_stage == "thinker":
-            hidden = model_outputs
+            # Thinker forward returns (hidden_states, inputs_embeds) tuple
+            # so that talker can use both for hidden_text_merge conditioning.
+            hidden, text_embeds = model_outputs
+
+            # Pipeline-parallel non-final rank: language_model returns
+            # IntermediateTensors, not a flat tensor.  Pass through as-is.
+            if isinstance(hidden, IntermediateTensors):
+                return OmniOutput(text_hidden_states=hidden, multimodal_outputs={})
+
+            flat_hidden = hidden.reshape(-1, hidden.shape[-1])
+            mmo: dict = {"thinker_hidden_states": flat_hidden}
+            if text_embeds is not None:
+                # Shape: [total_batch_tokens, thinker_hidden_dim]
+                # gpu_ar_model_runner slices these per-request via [start:end].
+                mmo["thinker_text_embeds"] = text_embeds
             return OmniOutput(
-                text_hidden_states=hidden.reshape(-1, hidden.shape[-1]),
-                multimodal_outputs={},
+                text_hidden_states=flat_hidden,
+                multimodal_outputs=mmo,
             )
 
         if self.model_stage == "talker":
@@ -305,51 +319,106 @@ class MiniCPMOForConditionalGeneration(
         """Build talker input embeddings from thinker conditioning.
 
         Implements MiniCPMTTS hidden_text_merge:
-            talker_input = text_projection(thinker_text_embeds)
-                         + hidden_projection(thinker_hidden_states)
+            talker_input[t] = text_projection(thinker_text_embeds[t])
+                            + hidden_projection(thinker_hidden_states[t])
+                            + codec_embedding(input_ids[t])
+
+        Prefill (span_len > 1):
+            - Project full thinker sequence → ``full_conditioning``
+            - Use first ``span_len`` positions for this prefill step
+            - Store remaining positions in ``trailing_text_hidden`` queue
+
+        Decode (span_len == 1):
+            - Pop one entry from ``trailing_text_hidden`` queue
+            - Add codec embedding for the generated codec token
 
         Args:
-            input_ids:    Codec token IDs for this AR step.
-            input_embeds: Pre-built embeddings (None at first step).
-            **info_dict:  Runtime context carrying thinker outputs:
-                          ``thinker_text_embeds``  — thinker token embeddings
-                          ``thinker_hidden_states`` — thinker LLM hidden states
+            input_ids:    Codec token IDs (placeholder zeros during prefill).
+            input_embeds: Pre-built embeddings (unused; we build from scratch).
+            **info_dict:  Per-request buffer carrying thinker outputs and
+                          decode-step state:
+                          ``thinker_text_embeds``   — [N, thinker_hidden]
+                          ``thinker_hidden_states``  — [N, thinker_hidden]
+                          ``trailing_text_hidden``   — [remaining, talker_hidden]
 
         Returns:
             (input_ids, input_embeds, update_dict)
         """
-        thinker_text_embeds: torch.Tensor | None = info_dict.get(  # type: ignore[assignment]
-            "thinker_text_embeds"
-        )
-        thinker_hidden_states: torch.Tensor | None = info_dict.get(  # type: ignore[assignment]
-            "thinker_hidden_states"
-        )
-
+        span_len = input_ids.shape[0]
         device = self._module_device(self.talker)
+        update_dict: dict = {}
 
-        if input_embeds is None:
+        if span_len > 1:
+            # ---- Prefill ----
+            thinker_text_embeds: torch.Tensor | None = info_dict.get(  # type: ignore[assignment]
+                "thinker_text_embeds"
+            )
+            thinker_hidden_states: torch.Tensor | None = info_dict.get(  # type: ignore[assignment]
+                "thinker_hidden_states"
+            )
+
             if thinker_text_embeds is not None or thinker_hidden_states is not None:
                 t_text = (
-                    thinker_text_embeds.to(device)
+                    thinker_text_embeds.to(device=device, dtype=torch.bfloat16)
                     if isinstance(thinker_text_embeds, torch.Tensor)
                     else None
                 )
                 t_hid = (
-                    thinker_hidden_states.to(device)
+                    thinker_hidden_states.to(device=device, dtype=torch.bfloat16)
                     if isinstance(thinker_hidden_states, torch.Tensor)
                     else None
                 )
-                # hidden_text_merge conditioning
-                conditioning = self.talker.project_thinker_outputs(t_text, t_hid)
-                # Add codec embedding for current token
-                codec_embeds = self.talker.embed_input_ids(input_ids.to(device))
-                input_embeds = conditioning + codec_embeds
-            else:
-                # Decode fallback: no thinker conditioning available; use codec
-                # embedding only (happens when streaming decode has no prior hidden)
-                input_embeds = self.talker.embed_input_ids(input_ids.to(device))
+                # Project all N thinker positions to talker hidden dim
+                full_conditioning = self.talker.project_thinker_outputs(t_text, t_hid)  # [N, talker_hidden]
 
-        return input_ids, input_embeds, {}
+                # Support chunked prefill: track position within thinker sequence.
+                # num_processed_tokens counts how many talker positions have been
+                # processed in previous prefill chunks for this request.
+                start_pos: int = info_dict.get("num_processed_tokens", 0)  # type: ignore[assignment]
+                end_pos = start_pos + span_len
+                input_conditioning = full_conditioning[start_pos:end_pos]
+
+                # Store remaining positions as trailing queue for decode steps.
+                if full_conditioning.shape[0] > end_pos:
+                    update_dict["trailing_text_hidden"] = (
+                        full_conditioning[end_pos:].detach()
+                    )
+                update_dict["num_processed_tokens"] = end_pos
+
+                # hidden_text_merge: conditioning + codec embedding
+                codec_embeds = self.talker.embed_input_ids(input_ids.to(device))
+                input_embeds = input_conditioning + codec_embeds
+            else:
+                # No thinker conditioning — use codec embedding only
+                if input_embeds is None:
+                    input_embeds = self.talker.embed_input_ids(input_ids.to(device))
+
+        else:
+            # ---- Decode (one token at a time) ----
+            codec_embeds = self.talker.embed_input_ids(input_ids.to(device))
+            trailing: torch.Tensor | None = info_dict.get(  # type: ignore[assignment]
+                "trailing_text_hidden"
+            )
+
+            if isinstance(trailing, torch.Tensor) and trailing.numel() > 0 and trailing.shape[0] > 0:
+                text_step = trailing[:1].to(device=device, dtype=codec_embeds.dtype)
+                new_trailing = (
+                    trailing[1:].detach()
+                    if trailing.shape[0] > 1
+                    else torch.zeros(
+                        0,
+                        trailing.shape[-1],
+                        device=trailing.device,
+                        dtype=trailing.dtype,
+                    )
+                )
+                input_embeds = text_step + codec_embeds
+                update_dict["trailing_text_hidden"] = new_trailing
+            else:
+                # Queue exhausted — use codec embedding only
+                input_embeds = codec_embeds
+
+        return input_ids, input_embeds, update_dict
 
     def talker_postprocess(
         self,

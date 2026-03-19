@@ -210,6 +210,7 @@ class StageConfigFactory:
         "glm-image": "glm_image",
         "cosyvoice3": "cosyvoice3",
         "mammothmoda2": "mammoth_moda2",
+        "minicpmo": "minicpm_o",
     }
 
     # Fallback: map HF architecture class names to pipeline dirs.

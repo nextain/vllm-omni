@@ -442,13 +442,24 @@ class MiniCPMOThinkerForConditionalGeneration(
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
         **kwargs: object,
-    ) -> torch.Tensor | IntermediateTensors:
-        return self.language_model(
+    ) -> tuple[torch.Tensor | IntermediateTensors, torch.Tensor | None]:
+        """Run the thinker LLM and return (hidden_states, inputs_embeds).
+
+        inputs_embeds is also returned so that ``make_omni_output`` can pass
+        it to the talker stage as ``thinker_text_embeds`` conditioning.
+        If inputs_embeds is not provided by the runner (text-only, no
+        multimodal), we build it explicitly before calling the LLM so that
+        we always have a reference to the actual token embeddings.
+        """
+        if inputs_embeds is None:
+            inputs_embeds = self.embed_input_ids(input_ids)
+        hidden_states = self.language_model(
             input_ids=input_ids,
             positions=positions,
             intermediate_tensors=intermediate_tensors,
             inputs_embeds=inputs_embeds,
         )
+        return hidden_states, inputs_embeds
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         loader = AutoWeightsLoader(
