@@ -9,6 +9,7 @@ from vllm.logger import init_logger
 from vllm.transformers_utils.config import get_config, get_hf_file_to_dict
 from vllm.transformers_utils.repo_utils import file_or_path_exists
 
+from vllm_omni.config.stage_config import StageConfigFactory
 from vllm_omni.config.yaml_util import create_config, load_yaml_config, merge_configs
 from vllm_omni.entrypoints.stage_utils import _to_dict
 from vllm_omni.platforms import current_omni_platform
@@ -318,7 +319,19 @@ def load_and_resolve_stage_configs(
         config_path = resolve_model_config_path(model)
         stage_configs = load_stage_configs_from_model(model, base_engine_args=kwargs)
         if not stage_configs:
-            if default_stage_cfg_factory is not None:
+            # Try new StageConfigFactory path (pipeline.yaml based) before falling back to diffusion
+            trust_remote_code = (kwargs or {}).get("trust_remote_code", True)
+            new_stage_configs = StageConfigFactory.create_from_model(
+                model, cli_overrides={"trust_remote_code": trust_remote_code, **(kwargs or {})}
+            )
+            if new_stage_configs:
+                logger.info(
+                    "Loaded %d stages via StageConfigFactory for model: %s",
+                    len(new_stage_configs),
+                    model,
+                )
+                stage_configs = [s.to_omegaconf() for s in new_stage_configs]
+            elif default_stage_cfg_factory is not None:
                 default_stage_cfg = default_stage_cfg_factory()
                 stage_configs = create_config(default_stage_cfg)
             else:
