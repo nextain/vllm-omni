@@ -19,7 +19,13 @@ stages:
     scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
     final_output: true
     final_output_type: text
-    is_comprehension: false
+    is_comprehension: true
+    # Must forward thinker_hidden_states to Stage-1 Talker via multimodal_output.
+    # Without this, output_strip clears multimodal for final_output_type=text stages.
+    preserve_multimodal: true
+    # A40 46GB + bitsandbytes INT4: Thinker ~5GB model → 25% (11.1GB) for model+KV
+    # Stage-1+2 combined use ~31GB, leaving ~13GB free for Stage-0 pre-check
+    gpu_memory_utilization: 0.25
 
   - stage_id: 1
     model_stage: talker
@@ -29,6 +35,8 @@ stages:
     scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
     final_output: false
+    # Talker (LlamaAR) — 22% (10GB)
+    gpu_memory_utilization: 0.22
 
   - stage_id: 2
     model_stage: code2wav
@@ -39,3 +47,5 @@ stages:
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
     final_output: true
     final_output_type: audio
+    # Code2Wav: CUDA overhead + INT4 model > 18%. Use 22% (9.77GB)
+    gpu_memory_utilization: 0.22

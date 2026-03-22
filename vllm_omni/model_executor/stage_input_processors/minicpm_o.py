@@ -61,6 +61,14 @@ def thinker2talker(
 
         # multimodal_output is already sliced per-request and moved to CPU
         # by gpu_ar_model_runner.  Shape: [num_thinker_tokens, thinker_hidden].
+        import logging as _logging
+        _logging.getLogger(__name__).warning(
+            "[DBG thinker2talker] output type=%s, hasattr(output,'multimodal_output')=%s, "
+            "multimodal_output=%s",
+            type(output).__name__,
+            hasattr(output, "multimodal_output"),
+            getattr(output, "multimodal_output", "MISSING"),
+        )
         thinker_text_embeds = output.multimodal_output.get("thinker_text_embeds")
         thinker_hidden_states = output.multimodal_output.get("thinker_hidden_states")
 

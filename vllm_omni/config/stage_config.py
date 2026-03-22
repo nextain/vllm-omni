@@ -71,7 +71,16 @@ class StageConfig:
     hf_config_name: str | None = None
     is_comprehension: bool = False
 
-    # Runtime overrides (populated from CLI, not from pipeline YAML)
+    # When True, multimodal_output is NOT stripped before forwarding to downstream
+    # stages, even if this stage is also a final_output=True / final_output_type="text"
+    # stage (e.g. MiniCPM-o Thinker must pass thinker_hidden_states to Talker).
+    preserve_multimodal: bool = False
+
+    # YAML-level stage defaults (e.g. per-stage gpu_memory_utilization).
+    # CLI overrides take precedence over these.
+    yaml_defaults: dict[str, Any] = field(default_factory=dict)
+
+    # Runtime overrides (populated from CLI merged with yaml_defaults)
     runtime_overrides: dict[str, Any] = field(default_factory=dict)
 
     def to_omegaconf(self) -> Any:
@@ -92,10 +101,13 @@ class StageConfig:
         if self.hf_config_name:
             engine_args["hf_config_name"] = self.hf_config_name
 
-        # Apply runtime overrides (CLI args)
+        # Apply runtime overrides (CLI args) — sanitize for OmegaConf
+        _safe_types = (str, int, float, bool, type(None), dict, list)
         for key, value in self.runtime_overrides.items():
             if key not in ("devices", "max_batch_size"):
-                engine_args[key] = value
+                if isinstance(value, _safe_types):
+                    engine_args[key] = value
+                # Skip non-serializable Python objects (type annotations, callables, etc.)
 
         # Build runtime config
         runtime: dict[str, Any] = {
@@ -115,6 +127,7 @@ class StageConfig:
             "final_output": self.final_output,
             "final_output_type": self.final_output_type,
             "is_comprehension": self.is_comprehension,
+            "preserve_multimodal": self.preserve_multimodal,
         }
 
         if self.custom_process_input_func:
@@ -376,6 +389,12 @@ class StageConfigFactory:
                 input_sources = []
             input_sources = list(input_sources)
 
+            # Collect YAML-level runtime defaults (e.g. per-stage gpu_memory_utilization)
+            _YAML_RUNTIME_KEYS = ("gpu_memory_utilization", "max_model_len", "max_num_seqs")
+            yaml_defaults = {
+                k: stage_data.get(k) for k in _YAML_RUNTIME_KEYS if stage_data.get(k) is not None
+            }
+
             stage = StageConfig(
                 stage_id=stage_data.stage_id,
                 model_stage=stage_data.model_stage,
@@ -388,6 +407,8 @@ class StageConfigFactory:
                 scheduler_cls=stage_data.get("scheduler_cls", None),
                 hf_config_name=stage_data.get("hf_config_name", None),
                 is_comprehension=stage_data.get("is_comprehension", False),
+                preserve_multimodal=stage_data.get("preserve_multimodal", False),
+                yaml_defaults=yaml_defaults,
             )
             stages.append(stage)
 
@@ -470,16 +491,23 @@ class StageConfigFactory:
 
         # Apply global overrides – any key not in the internal blocklist
         # is forwarded so that engine-registered params work out of the box.
+        # Keys already set in yaml_defaults are skipped here (yaml takes priority
+        # over global CLI defaults; per-stage CLI below can still override yaml).
         for key, value in cli_overrides.items():
             if key in cls._INTERNAL_KEYS:
                 continue
             if re.match(r"stage_\d+_", key):
                 # Per-stage keys handled below
                 continue
-            if value is not None:
+            if value is not None and key not in stage.yaml_defaults:
                 result[key] = value
 
-        # Apply per-stage overrides (--stage-N-* format, take precedence)
+        # Layer in yaml_defaults for keys not set by global CLI
+        for key, value in stage.yaml_defaults.items():
+            if key not in result:
+                result[key] = value
+
+        # Apply per-stage overrides (--stage-N-* format, take precedence over yaml)
         stage_prefix = f"stage_{stage.stage_id}_"
         for key, value in cli_overrides.items():
             if key.startswith(stage_prefix) and value is not None:

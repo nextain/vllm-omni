@@ -547,6 +547,7 @@ class OmniStage:
             "cfg_kv_collect_func": getattr(self.stage_config, "cfg_kv_collect_func", None),
             "final_output": self.final_output,
             "final_output_type": self.final_output_type,
+            "preserve_multimodal": getattr(self.stage_config, "preserve_multimodal", False),
         }
         try:
             old_env = os.environ.get("VLLM_LOGGING_PREFIX")
@@ -1271,6 +1272,7 @@ async def _stage_worker_async(
     stage_type = stage_payload.get("stage_type", "llm")
     final_output = stage_payload.get("final_output", False)
     final_output_type = stage_payload.get("final_output_type", None)
+    preserve_multimodal = stage_payload.get("preserve_multimodal", False)
 
     cfg_kv_collect_func = load_func_from_config(stage_payload.get("cfg_kv_collect_func"))
     # Handle non-standard model directory structures (e.g., tokenizer in root, model in subdir)
@@ -1632,7 +1634,7 @@ async def _stage_worker_async(
             batch_request_ids, batch_request_outputs, _gen_ms_list, batch_metrics
         ):
             try:
-                r_outputs = [output_strip(output, final_output, final_output_type)]
+                r_outputs = [output_strip(output, final_output, final_output_type, preserve_multimodal)]
                 use_shm, payload = maybe_dump_to_shm(r_outputs, shm_threshold_bytes)
                 if use_shm:
                     out_q.put(
@@ -1718,7 +1720,12 @@ def make_stage_stats(_agg_total_tokens: int, _agg_total_gen_time_ms: float):
     return StageStats(total_token=_agg_total_tokens, total_gen_time_ms=_agg_total_gen_time_ms)
 
 
-def output_strip(r_output: RequestOutput | OmniRequestOutput, final_output: bool, final_output_type: str | None):
+def output_strip(
+    r_output: RequestOutput | OmniRequestOutput,
+    final_output: bool,
+    final_output_type: str | None,
+    preserve_multimodal: bool = False,
+):
     """
     Strip unnecessary multimodal outputs from stages results,
     in order to:
@@ -1728,6 +1735,11 @@ def output_strip(r_output: RequestOutput | OmniRequestOutput, final_output: bool
 
     # check multimodal data is required by stage output config.
     if final_output and final_output_type != "text":
+        return r_output
+
+    # Stage explicitly requests multimodal preservation (e.g. MiniCPM-o Thinker
+    # is final_output=True/text but must forward thinker_hidden_states to Talker).
+    if preserve_multimodal:
         return r_output
 
     # If the request has already finished, should not be altered.
