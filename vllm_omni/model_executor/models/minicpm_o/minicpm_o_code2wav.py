@@ -142,6 +142,12 @@ class MiniCPMOCode2Wav(nn.Module):
         Returns:
             waveform: [batch, 1, audio_len]
         """
+        # CosyVoice2 flow uses Python-level diffusion loops and CPU-GPU sync ops
+        # that are incompatible with CUDA graph capture.  Return a dummy tensor
+        # during capture so vllm's graph compilation phase can proceed.
+        if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
+            return codes.new_zeros(codes.shape[0], 1, 1, dtype=torch.float32)
+
         flow = self.__dict__["_flow"]
         hift = self.__dict__["_hift"]
 
