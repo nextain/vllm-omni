@@ -308,9 +308,9 @@ class OmniBase:
         self._inline_diffusion = False
         self._inline_engine = None
 
-        stage_init_timeout = kwargs.get("stage_init_timeout", 20)
+        stage_init_timeout = kwargs.get("stage_init_timeout", 600)
         shm_threshold_bytes = kwargs.get("shm_threshold_bytes", 65536)
-        init_timeout = kwargs.get("init_timeout", 300)
+        init_timeout = kwargs.get("init_timeout", 1800)
         worker_backend = kwargs.get("worker_backend", "multi_process")
         ray_address = kwargs.get("ray_address", None)
         batch_timeout = kwargs.get("batch_timeout", 10)

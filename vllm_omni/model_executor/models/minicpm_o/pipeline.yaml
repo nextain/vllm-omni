@@ -9,6 +9,8 @@
 
 model_type: minicpmo
 async_chunk: false
+init_timeout: 1800
+stage_init_timeout: 600
 
 stages:
   - stage_id: 0

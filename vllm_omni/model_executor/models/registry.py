@@ -58,6 +58,14 @@ _OMNI_MODELS = {
         "CosyVoice3Model",
     ),
     # MiniCPM-o 4.5 (Thinker + Talker + Code2Wav)
+    # "MiniCPMO" overrides vllm's built-in MiniCPMO4_5 so that our multi-stage
+    # MiniCPMOForConditionalGeneration (with have_multimodal_outputs + make_omni_output)
+    # is loaded instead of the monolithic vllm upstream class.
+    "MiniCPMO": (
+        "minicpm_o",
+        "minicpm_o",
+        "MiniCPMOForConditionalGeneration",
+    ),
     "MiniCPMOForConditionalGeneration": (
         "minicpm_o",
         "minicpm_o",

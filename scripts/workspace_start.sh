@@ -18,12 +18,6 @@ if [ ! -f "$VENV/bin/activate" ]; then
 fi
 source "$VENV/bin/activate"
 
-# vllm_omni 확인
-python3 -c "import vllm_omni" 2>/dev/null || {
-  echo "[ERROR] vllm_omni 미설치. 먼저 실행: bash /workspace/scripts/workspace_setup.sh"
-  exit 1
-}
-
 # 모델 확인
 [ -d "$MODEL_PATH" ] || {
   echo "[ERROR] 모델 없음: $MODEL_PATH"
@@ -40,6 +34,7 @@ vllm serve "$MODEL_PATH" \
   --host 0.0.0.0 \
   --trust-remote-code \
   --max-model-len 4096 \
-  --quantization bitsandbytes \
-  --load-format bitsandbytes \
+  --dtype bfloat16 \
+  --stage-init-timeout 1800 \
+  --init-timeout 1800 \
   2>&1 | tee /workspace/vllm_omni_server.log

@@ -25,7 +25,13 @@ import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
+from vllm.model_executor.models.minicpmv import (
+    MiniCPMVDummyInputsBuilder,
+    MiniCPMVMultiModalProcessor,
+    MiniCPMVProcessingInfo,
+)
 from vllm.model_executor.models.utils import maybe_prefix
+from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import IntermediateTensors
 from vllm.v1.sample.sampler import Sampler
 
@@ -53,9 +59,11 @@ AUDIO_BOS_TOKEN_ID: int = 151859  # <|audio_bos|>  (placeholder)
 AUDIO_EOS_TOKEN_ID: int = 151860  # <|audio_eos|>  (placeholder)
 
 
-# TODO(Phase 6): Add @MULTIMODAL_REGISTRY.register_processor() decorator here
-# with MiniCPMOThinkerMultiModalProcessor, MiniCPMOThinkerProcessingInfo, and
-# MiniCPMOThinkerDummyInputsBuilder once those classes are implemented.
+@MULTIMODAL_REGISTRY.register_processor(
+    MiniCPMVMultiModalProcessor,
+    info=MiniCPMVProcessingInfo,
+    dummy_inputs=MiniCPMVDummyInputsBuilder,
+)
 class MiniCPMOForConditionalGeneration(
     nn.Module,
     SupportsMultiModal,

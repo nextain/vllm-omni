@@ -13,7 +13,7 @@ if [ -z "$SSH_PORT" ]; then
   exit 1
 fi
 
-RUNPOD_HOST="69.30.85.139"
+RUNPOD_HOST="69.30.85.8"
 REMOTE_DIR="/workspace/vllm-omni"
 LOCAL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
