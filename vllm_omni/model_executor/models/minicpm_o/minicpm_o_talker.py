@@ -69,12 +69,13 @@ class MiniCPMOTalkerResizeMLP(nn.Module):
 
     def __init__(self, llm_dim: int, intermediate_size: int, hidden_size: int):
         super().__init__()
-        self.linear_fc1 = nn.Linear(llm_dim, intermediate_size, bias=True)
-        self.linear_fc2 = nn.Linear(intermediate_size, hidden_size, bias=True)
+        # Layer names match HF checkpoint: tts.projector_semantic.linear1/linear2
+        self.linear1 = nn.Linear(llm_dim, intermediate_size, bias=True)
+        self.linear2 = nn.Linear(intermediate_size, hidden_size, bias=True)
         self.act_fn = nn.SiLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.linear_fc2(self.act_fn(self.linear_fc1(x)))
+        return self.linear2(self.act_fn(self.linear1(x)))
 
 
 class MiniCPMOTalkerLLM(LlamaForCausalLM):
