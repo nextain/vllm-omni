@@ -141,6 +141,8 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
             "tts.head_code.0.": "codec_head.",
             "tts.projector_semantic.": "text_projection.",
             "tts.projector_spk.": "hidden_projection.",
+            # tts.emb_text shares weights with the LM embedding table
+            "tts.emb_text.": "language_model.model.embed_tokens.",
             "tts.": "",
         }
     )
