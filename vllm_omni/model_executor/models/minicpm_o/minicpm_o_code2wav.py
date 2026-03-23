@@ -179,7 +179,8 @@ class MiniCPMOCode2Wav(nn.Module):
                     embedding=embedding,
                     n_timesteps=n_timesteps,
                 )
-                wav = hift(mel.float())  # HiFi-GAN requires float32
+                wav_out = hift(mel.float())  # HiFi-GAN requires float32
+                wav = wav_out[0] if isinstance(wav_out, tuple) else wav_out
 
             results.append(wav)
 
