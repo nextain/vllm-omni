@@ -500,6 +500,9 @@ class MiniCPMOForConditionalGeneration(
 
         if self.code2wav is not None:
             loaded.update(self.code2wav.load_weights(iter(code2wav_weights)))
+            # Code2Wav has no registered nn.Module parameters (weights loaded
+            # from assets/token2wav/ separately). named_parameters() is empty,
+            # so vllm's state_dict check finds nothing to validate.
 
         logger.info(
             "MiniCPMO: loaded %d weight keys (stage=%s)",
