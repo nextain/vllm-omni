@@ -493,10 +493,17 @@ class MiniCPMOForConditionalGeneration(
         loaded: set[str] = set()
 
         if self.thinker is not None:
-            loaded.update(self.thinker.load_weights(iter(thinker_weights)))
+            # AutoWeightsLoader returns keys relative to the sub-module
+            # (e.g. "llm.layers.*"). vllm's post-load validator checks keys
+            # against the ROOT model's named_parameters() which include the
+            # sub-module prefix (e.g. "thinker.llm.layers.*").  Add it here.
+            thinker_loaded = self.thinker.load_weights(iter(thinker_weights))
+            loaded.update(f"thinker.{k}" for k in thinker_loaded)
 
         if self.talker is not None:
-            loaded.update(self.talker.load_weights(iter(talker_weights)))
+            # Same prefix logic: talker-relative keys → root-relative keys.
+            talker_loaded = self.talker.load_weights(iter(talker_weights))
+            loaded.update(f"talker.{k}" for k in talker_loaded)
 
         if self.code2wav is not None:
             loaded.update(self.code2wav.load_weights(iter(code2wav_weights)))
