@@ -310,7 +310,10 @@ class MiniCPMOThinkerForConditionalGeneration(
             "llm.lm_head.": "language_model.lm_head.",
             "llm.model.": "language_model.model.",
             "llm.": "language_model.",
-        }
+        },
+        # vllm's WhisperEncoderLayer wraps fc1/fc2 in an mlp sub-module.
+        # HF checkpoint stores them as .fc1./.fc2.; vllm uses .mlp.fc1./.mlp.fc2.
+        orig_to_new_substr={".fc1.": ".mlp.fc1.", ".fc2.": ".mlp.fc2."},
     )
 
     packed_modules_mapping = {
