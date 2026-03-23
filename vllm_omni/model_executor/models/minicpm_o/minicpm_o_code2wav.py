@@ -117,7 +117,10 @@ class MiniCPMOCode2Wav(nn.Module):
             k.replace("generator.", ""): v for k, v in hift_ckpt.items()
         }
         hift.load_state_dict(hift_state_dict, strict=True)
-        hift.to(device).eval()
+        # HiFi-GAN uses float32 internally (SineGenerator produces float32 sine
+        # waves that must match linear layer dtypes).  Keep in float32 regardless
+        # of the main model dtype.
+        hift.float().to(device).eval()
         self.__dict__["_hift"] = hift
 
         logger.info(
@@ -176,7 +179,7 @@ class MiniCPMOCode2Wav(nn.Module):
                     embedding=embedding,
                     n_timesteps=n_timesteps,
                 )
-                wav = hift(mel)  # [1, 1, audio_len]
+                wav = hift(mel.float())  # HiFi-GAN requires float32
 
             results.append(wav)
 
