@@ -6,8 +6,8 @@ All tests run on CPU with random weights.  No GPU required.
 
 Covers:
 - MiniCPMOResampler: 2D perceiver cross-attention (shape correctness)
-- MiniCPMOTalkerResizeMLP: thinker→talker dimension projection
-- _build_minicpmo_cosyvoice_config: CosyVoice3Config for MiniCPM-o
+- MiniCPMOTalkerResizeMLP: thinker→talker dimension projection (ReLU)
+- MiniCPMOCode2Wav: lazy loading verification
 - WeightsMapper prefix ordering (thinker + talker)
 - Registry entries for all four MiniCPM-o architectures
 """
@@ -109,54 +109,17 @@ class TestMiniCPMOTalkerResizeMLP:
         out = mlp(x)
         assert out.shape == (3, 7, 8)
 
-    def test_activation_is_silu(self, mlp):
+    def test_activation_is_relu(self, mlp):
+        """Matches openbmb MultiModalProjector which uses ReLU."""
         import torch.nn as nn
 
-        assert isinstance(mlp.act_fn, nn.SiLU)
+        assert isinstance(mlp.act_fn, nn.ReLU)
 
     def test_linear_dimensions(self, mlp):
-        assert mlp.linear_fc1.in_features == 16
-        assert mlp.linear_fc1.out_features == 32
-        assert mlp.linear_fc2.in_features == 32
-        assert mlp.linear_fc2.out_features == 8
-
-
-# ---------------------------------------------------------------------------
-# _build_minicpmo_cosyvoice_config
-# ---------------------------------------------------------------------------
-
-
-class TestBuildMiniCPMOCosyVoiceConfig:
-    """Tests for the CosyVoice3Config factory used in Code2Wav."""
-
-    @pytest.fixture
-    def cfg(self):
-        from vllm_omni.model_executor.models.minicpm_o.minicpm_o_code2wav import (
-            _build_minicpmo_cosyvoice_config,
-        )
-
-        return _build_minicpmo_cosyvoice_config()
-
-    def test_flow_vocab_size(self, cfg):
-        """s3tokenizer has vocab_size≈6562, one more than CosyVoice3's 6561."""
-        assert cfg.flow["vocab_size"] == 6562
-
-    def test_llm_speech_token_size(self, cfg):
-        assert cfg.llm["speech_token_size"] == 6562
-
-    def test_llm_eos_token_id(self, cfg):
-        assert cfg.llm["eos_token_id"] == 6563
-
-    def test_sample_rate(self, cfg):
-        """CosyVoice default sample_rate=24000."""
-        assert cfg.sample_rate == 24000
-
-    def test_token_frame_rate(self, cfg):
-        """25 codec frames per second → 960 samples/token at 24kHz."""
-        assert cfg.token_frame_rate == 25
-
-    def test_token_mel_ratio(self, cfg):
-        assert cfg.token_mel_ratio == 2
+        assert mlp.linear1.in_features == 16
+        assert mlp.linear1.out_features == 32
+        assert mlp.linear2.in_features == 32
+        assert mlp.linear2.out_features == 8
 
 
 # ---------------------------------------------------------------------------
@@ -241,17 +204,20 @@ class TestTalkerWeightsMapper:
             )
 
     def test_tts_emb_code_maps_to_codec_embedding(self, mapper):
-        """tts.emb_code.0. must map to codec_embedding (CosyVoice3 codec vocab)."""
+        """tts.emb_code.0. must map to codec_embedding (CosyVoice2 codec vocab)."""
         assert mapper.orig_to_new_prefix["tts.emb_code.0."] == "codec_embedding."
 
     def test_tts_head_code_maps_to_codec_head(self, mapper):
         assert mapper.orig_to_new_prefix["tts.head_code.0."] == "codec_head."
 
-    def test_tts_projector_semantic_maps_to_text_projection(self, mapper):
-        assert mapper.orig_to_new_prefix["tts.projector_semantic."] == "text_projection."
+    def test_tts_projector_semantic_maps_to_semantic_projection(self, mapper):
+        assert mapper.orig_to_new_prefix["tts.projector_semantic."] == "semantic_projection."
 
-    def test_tts_projector_spk_maps_to_hidden_projection(self, mapper):
-        assert mapper.orig_to_new_prefix["tts.projector_spk."] == "hidden_projection."
+    def test_tts_projector_spk_maps_to_spk_projection(self, mapper):
+        assert mapper.orig_to_new_prefix["tts.projector_spk."] == "spk_projection."
+
+    def test_tts_emb_text_maps_to_emb_text(self, mapper):
+        assert mapper.orig_to_new_prefix["tts.emb_text."] == "emb_text."
 
 
 # ---------------------------------------------------------------------------
@@ -315,25 +281,17 @@ class TestMiniCPMOCode2WavInstantiation:
         model = MiniCPMOCode2Wav(vllm_config=None)
         assert model._model_dir is None
 
-    def test_has_flow_model(self):
+    def test_flow_not_loaded_initially(self):
+        """Flow and HiFi-GAN are lazily loaded via load_from_directory()."""
         from vllm_omni.model_executor.models.minicpm_o.minicpm_o_code2wav import MiniCPMOCode2Wav
 
         model = MiniCPMOCode2Wav(vllm_config=None)
-        assert hasattr(model, "flow_model")
-
-    def test_total_upsample_calculation(self):
-        """total_upsample = sample_rate / input_frame_rate = 24000/25 = 960."""
-        from vllm_omni.model_executor.models.minicpm_o.minicpm_o_code2wav import MiniCPMOCode2Wav
-
-        model = MiniCPMOCode2Wav(vllm_config=None)
-        expected = int(
-            model.flow_model.config.sample_rate / model.flow_model.input_frame_rate
-        )
-        assert expected == 960
+        assert model.__dict__["_flow"] is None
+        assert model.__dict__["_hift"] is None
 
 
 # ---------------------------------------------------------------------------
-# Phase 6: Thinker forward returns (hidden_states, inputs_embeds) tuple
+# Thinker forward returns (hidden_states, inputs_embeds) tuple
 # ---------------------------------------------------------------------------
 
 

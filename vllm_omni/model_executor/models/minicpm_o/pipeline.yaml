@@ -5,7 +5,7 @@
 #
 # Stage 0: Thinker  — SigLIP2 + Whisper + Qwen3-7B → text hidden states
 # Stage 1: Talker   — MiniCPMTTS Llama AR → audio codec tokens (num_vq=1)
-# Stage 2: Code2Wav — CosyVoice3 flow-matching DiT + HiFi-GAN → waveform
+# Stage 2: Code2Wav — CosyVoice2 flow-matching DiT + HiFi-GAN → waveform
 
 model_type: minicpmo
 async_chunk: false
@@ -52,6 +52,10 @@ stages:
     # talker_preprocess conditioning would be lost under graph replay.  Eager mode
     # lets _preprocess return a dynamically-sized 768-wide tensor instead.
     enforce_eager: true
+    # Codec EOS token: num_audio_tokens - 1 = 6562 - 1 = 6561
+    # (matches original: eos_token=torch.tensor([self.tts.config.num_audio_tokens - 1]))
+    default_sampling_params:
+      stop_token_ids: [6561]
     engine_args:
       # Talker has no vision/audio encoders; disable MM profiling to avoid embed_multimodal calls.
       limit_mm_per_prompt: {image: 0, video: 0}

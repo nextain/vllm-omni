@@ -571,7 +571,6 @@ class GPUARModelRunner(OmniGPUModelRunner):
                 mm_payload: dict[str, object] = {}
                 for k, v in multimodal_outputs.items():
                     try:
-                        logger.warning("[DBG mm] k=%s, is_tensor=%s, v_shape=%s, hcpu_shape=%s", k, isinstance(v, torch.Tensor), v.shape if isinstance(v, torch.Tensor) else type(v).__name__, hidden_states_cpu.shape)
                         if isinstance(v, torch.Tensor) and v.shape[0] == hidden_states_cpu.shape[0]:
                             mm_payload[k] = v.detach().to("cpu")[start:end].contiguous()
                         elif isinstance(v, dict):
@@ -598,12 +597,6 @@ class GPUARModelRunner(OmniGPUModelRunner):
                     capturer.save_captured_experts(indices=self.slot_mapping)  # noqa
                 else:
                     logger.error("RoutedExpertsCapturer not initialized.")
-            logger.warning(
-                "[DBG gpu_ar] engine_output_type=%r, pooler_output is None: %s, multimodal keys: %s",
-                self.vllm_config.model_config.engine_output_type,
-                pooler_output is None,
-                [list(p.keys()) for p in pooler_output] if pooler_output else "N/A",
-            )
             output = OmniModelRunnerOutput(
                 req_ids=req_ids_output_copy,
                 req_id_to_index=req_id_to_index_output_copy,

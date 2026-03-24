@@ -222,17 +222,17 @@ class MiniCPMOVisionEncoder(nn.Module):
 
 
 class MiniCPMOAudioProjectionMLP(nn.Module):
-    """2-layer MLP projecting Whisper d_model → LLM hidden dim.
+    """2-layer MLP projecting Whisper d_model → LLM hidden dim (ReLU activation).
 
-    Matches HF checkpoint: audio_projection_layer.linear1 (d_model→hidden_size)
-    and audio_projection_layer.linear2 (hidden_size→hidden_size), both with bias.
+    Matches openbmb MultiModalProjector: Linear(in→out) → ReLU → Linear(out→out).
+    HF checkpoint keys: audio_projection_layer.linear1/linear2, both with bias.
     """
 
     def __init__(self, d_model: int, hidden_size: int):
         super().__init__()
         self.linear1 = nn.Linear(d_model, hidden_size, bias=True)
         self.linear2 = nn.Linear(hidden_size, hidden_size, bias=True)
-        self.act_fn = nn.SiLU()
+        self.act_fn = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear2(self.act_fn(self.linear1(x)))
@@ -375,7 +375,7 @@ class MiniCPMOThinkerForConditionalGeneration(
 
     @classmethod
     def get_placeholder_str(cls, modality: str, i: int) -> str | None:
-        # Placeholder strings are defined in the MultiModalProcessor (Phase 5).
+        # Placeholder strings are provided by MiniCPMVMultiModalProcessor.
         return None
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
@@ -549,11 +549,9 @@ class MiniCPMOThinkerForConditionalGeneration(
     ) -> tuple[torch.Tensor | IntermediateTensors, torch.Tensor | None]:
         """Run the thinker LLM and return (hidden_states, inputs_embeds).
 
-        inputs_embeds is also returned so that ``make_omni_output`` can pass
-        it to the talker stage as ``thinker_text_embeds`` conditioning.
-        If inputs_embeds is not provided by the runner (text-only, no
-        multimodal), we build it explicitly before calling the LLM so that
-        we always have a reference to the actual token embeddings.
+        Returns a 2-tuple so that ``make_omni_output`` can emit both
+        ``thinker_hidden_states`` (for talker semantic_projection) and
+        ``thinker_text_embeds`` (for async_chunk streaming compatibility).
         """
         if inputs_embeds is None:
             inputs_embeds = self.embed_input_ids(input_ids)

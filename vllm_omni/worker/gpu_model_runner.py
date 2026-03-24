@@ -81,9 +81,6 @@ class OmniGPUModelRunner(GPUModelRunner):
             _m = _m._orig_mod  # OptimizedModule → original nn.Module
         self._have_multimodal_outputs = getattr(_m, "have_multimodal_outputs", False)
         self._make_omni_output_fn = getattr(_m, "make_omni_output", None)
-        logger.warning("[DBG load] model type=%s, have_mm=%s, make_fn=%s",
-                       type(_m).__name__, self._have_multimodal_outputs,
-                       self._make_omni_output_fn is not None)
 
         # TODO move this model specific logic to a separate class
         # TTS model IS the talker (no .talker sub-attr); use getattr to support both Omni and TTS.
@@ -512,10 +509,6 @@ class OmniGPUModelRunner(GPUModelRunner):
 
     @torch.inference_mode()
     def extract_multimodal_outputs(self, hidden_states: torch.Tensor | list[torch.Tensor] | OmniOutput) -> dict:
-        logger.warning("[DBG extract] type=%s, have_mm=%s, is_OmniOutput=%s",
-                       type(hidden_states).__name__,
-                       getattr(self, "_have_multimodal_outputs", False),
-                       isinstance(hidden_states, OmniOutput))
         if (
             getattr(self, "_have_multimodal_outputs", False)
             and isinstance(hidden_states, OmniOutput)
@@ -1346,9 +1339,6 @@ class OmniGPUModelRunner(GPUModelRunner):
             **model_kwargs_extra,
         )
         _make_fn = getattr(self, "_make_omni_output_fn", None)
-        logger.warning("[DBG fwd] model_output type=%s, is_OmniOutput=%s, _make_fn=%s",
-                       type(model_output).__name__, isinstance(model_output, OmniOutput),
-                       _make_fn is not None)
         if not isinstance(model_output, OmniOutput) and _make_fn is not None:
             model_output = _make_fn(model_output, **model_kwargs_extra)
         # Cache model output so later sample_tokens can consume multimodal results.

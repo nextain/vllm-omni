@@ -27,7 +27,7 @@ class MiniCPMVSliceConfig(PretrainedConfig):
     def __init__(
         self,
         patch_size: int = 14,
-        max_slice_nums: int = 9,
+        max_slice_nums: int = 1,
         scale_resolution: int = 448,
         **kwargs,
     ):
@@ -54,7 +54,7 @@ class MiniCPMTTSConfig(PretrainedConfig):
         llm_down_scale: bool = False,
         llm_dim_model_base: int = 256,
         projector_type: str = "mlp",
-        normalize_projected_hidden: bool = False,
+        normalize_projected_hidden: bool = True,
         # Talker LLM (Llama backbone)
         hidden_act: str = "silu",
         hidden_size: int = 768,
@@ -70,8 +70,8 @@ class MiniCPMTTSConfig(PretrainedConfig):
         num_vq: int = 1,
         audio_bos_token_id: int = 151687,
         text_eos_token_id: int = 151692,
-        audio_tokenizer_type: str = "wavtokenizer",
-        audio_tokenizer_sample_rate: int = 24000,
+        audio_tokenizer_type: str = "s3tokenizer",
+        audio_tokenizer_sample_rate: int = 16000,
         # Conditioning
         condition_type: str = "hidden_text_merge",
         backbone_model: str = "llama",
@@ -79,7 +79,7 @@ class MiniCPMTTSConfig(PretrainedConfig):
         use_text: bool = True,
         interleaved: bool = False,
         # Attention
-        attention_type: str = "sliding_recompute",
+        attention_type: str = "full_attention",
         recomputed_chunks: int = 1,
         window_size: int = 2,
         # Streaming (inference-only; training flags excluded)
@@ -196,7 +196,7 @@ class MiniCPMOConfig(PretrainedConfig):
         intermediate_size: int = 12288,
         hidden_act: str = "silu",
         vocab_size: int = 151748,
-        max_position_embeddings: int = 32768,
+        max_position_embeddings: int = 40960,
         rope_theta: float = 1000000.0,
         rms_norm_eps: float = 1e-06,
         tie_word_embeddings: bool = False,
@@ -204,7 +204,7 @@ class MiniCPMOConfig(PretrainedConfig):
         # Vision
         query_num: int = 64,
         image_size: int = 448,
-        drop_vision_last_layer: bool = True,
+        drop_vision_last_layer: bool = False,
         batch_vision_input: bool = True,
         use_image_id: bool = True,
         vision_batch_size: int = 16,
@@ -214,7 +214,7 @@ class MiniCPMOConfig(PretrainedConfig):
         audio_config: dict | None = None,
         audio_pool_step: int = 5,
         audio_chunk_length: float = 1.0,
-        stream_input: bool = False,
+        stream_input: bool = True,
         listen_speak_type: str = "asr",
         # TTS / Talker
         tts_config: dict | None = None,

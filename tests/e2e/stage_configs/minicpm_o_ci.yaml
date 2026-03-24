@@ -1,7 +1,7 @@
 # Stage config for MiniCPM-o 4.5 with 3-stage architecture
 # Stage 0: Thinker (SigLIP2 + Whisper + Qwen3-7B)
 # Stage 1: Talker (MiniCPMTTS Llama AR, num_vq=1)
-# Stage 2: Code2Wav (CosyVoice3 DiT + HiFi-GAN)
+# Stage 2: Code2Wav (CosyVoice2 DiT + HiFi-GAN)
 #
 # Tested on RTX 3090 (24GB).  Thinker (BF16) ≈ 16GB, Talker ≈ 1GB.
 
@@ -62,8 +62,8 @@ stage_args:
     max_tokens: 2048
     seed: 42
     detokenize: false
-    # Talker codec EOS token — corresponds to num_audio_tokens=6562 → EOS=6563
-    stop_token_ids: [6563]
+    # Talker codec EOS token: num_audio_tokens - 1 = 6562 - 1 = 6561
+    stop_token_ids: [6561]
 
 - stage_id: 2
   runtime:

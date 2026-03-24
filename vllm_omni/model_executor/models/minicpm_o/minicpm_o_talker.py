@@ -19,6 +19,7 @@ from collections.abc import Iterable
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from transformers import LlamaConfig
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
@@ -56,10 +57,10 @@ def _build_llama_config(tts_config: MiniCPMTTSConfig) -> LlamaConfig:
 
 
 class MiniCPMOTalkerResizeMLP(nn.Module):
-    """2-layer MLP projecting thinker dim → talker hidden dim.
+    """2-layer MLP projecting thinker dim → talker hidden dim (ReLU activation).
 
-    Used for both text-embedding projection and hidden-state projection
-    (hidden_text_merge conditioning in MiniCPMTTS).
+    Matches openbmb MultiModalProjector: Linear(in→out) → ReLU → Linear(out→out).
+    Used by projector_semantic (hidden state projection) in hidden_text_merge.
 
     Args:
         llm_dim: Thinker hidden size (e.g. 4096).
@@ -72,7 +73,7 @@ class MiniCPMOTalkerResizeMLP(nn.Module):
         # Layer names match HF checkpoint: tts.projector_semantic.linear1/linear2
         self.linear1 = nn.Linear(llm_dim, intermediate_size, bias=True)
         self.linear2 = nn.Linear(intermediate_size, hidden_size, bias=True)
-        self.act_fn = nn.SiLU()
+        self.act_fn = nn.ReLU()
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.linear2(self.act_fn(self.linear1(x)))
@@ -113,25 +114,29 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
 
     Stage 2 of the 3-stage vllm-omni pipeline:
       Stage 1 (Thinker): vision + audio + text → token hidden states
-      Stage 2 (Talker):  TTS hidden states + text embeds → audio codec tokens
+      Stage 2 (Talker):  hidden_text_merge conditioning → audio codec tokens
       Stage 3 (Code2Wav): codec tokens → waveform
 
-    Architecture:
-      - text_projection:   MLP(4096 → 768) — projects thinker text embeds
-      - hidden_projection: MLP(4096 → 768) — projects thinker hidden states
-      - language_model:    Llama (hidden_size=768, num_layers=20, num_vq=1)
-      - codec_head:        Linear(768 → num_audio_tokens) — audio token logits
+    Architecture (matches openbmb/MiniCPM-o-4_5 MiniCPMTTS):
+      - emb_text:            Embedding(152064, 768) — TTS text token embeddings
+      - semantic_projection: MLP(4096 → 768, ReLU) — projects thinker hidden states
+      - language_model:      Llama (hidden_size=768, num_layers=20, num_vq=1)
+      - codec_embedding:     Embedding(6562, 768) — audio codec token embeddings
+      - codec_head:          Linear(768 → 6562) — audio token logits
 
-    Conditioning (hidden_text_merge):
-      talker_input = text_projection(thinker_text_embeds)
-                   + hidden_projection(thinker_hidden_states)
+    Conditioning (hidden_text_merge, from original modeling_minicpmo.py):
+      tts_embeds = emb_text(token_ids) + normalize(semantic_projection(hidden_states))
+
+    Note: projector_spk (tts.projector_spk.*) is defined in the original model
+    but NEVER called during inference. We load its weights but do not use it.
 
     Weight key mapping from HuggingFace checkpoint (tts.* prefix):
       tts.model.*              → language_model.model.*
       tts.emb_code.0.*         → codec_embedding.*
-      tts.head_code.0.*        → codec_head.*  (spectral norm resolved in load_weights)
-      tts.projector_semantic.* → text_projection.*
-      tts.projector_spk.*      → hidden_projection.*
+      tts.emb_text.*           → emb_text.*
+      tts.head_code.0.*        → codec_head.*  (spectral norm resolved)
+      tts.projector_semantic.* → semantic_projection.*
+      tts.projector_spk.*      → spk_projection.* (loaded but unused in inference)
       tts.*                    → (catch-all strip)
     """
 
@@ -139,9 +144,10 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         orig_to_new_prefix={
             "tts.model.": "language_model.model.",
             "tts.emb_code.0.": "codec_embedding.",
+            "tts.emb_text.": "emb_text.",
             "tts.head_code.0.": "codec_head.",
-            "tts.projector_semantic.": "text_projection.",
-            "tts.projector_spk.": "hidden_projection.",
+            "tts.projector_semantic.": "semantic_projection.",
+            "tts.projector_spk.": "spk_projection.",
             "tts.": "",
         }
     )
@@ -157,16 +163,25 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         tts_config: MiniCPMTTSConfig = vllm_config.model_config.hf_config
         self.config = tts_config
 
-        # Projection: thinker text embeddings → talker hidden dim
+        # TTS text embedding table (tts.emb_text.* in HF checkpoint)
+        # Maps LLM token IDs → 768-dim talker space. Primary text conditioning.
+        self.emb_text = nn.Embedding(
+            tts_config.num_text_tokens,
+            tts_config.hidden_size,
+        )
+
+        # Projection: thinker hidden states → talker hidden dim (ReLU)
         # (tts.projector_semantic.* in HF checkpoint)
-        self.text_projection = MiniCPMOTalkerResizeMLP(
+        self.semantic_projection = MiniCPMOTalkerResizeMLP(
             llm_dim=tts_config.llm_dim,
             intermediate_size=tts_config.llm_intermediate_size,
             hidden_size=tts_config.hidden_size,
         )
-        # Projection: thinker hidden states → talker hidden dim
-        # (tts.projector_spk.* in HF checkpoint)
-        self.hidden_projection = MiniCPMOTalkerResizeMLP(
+
+        # Speaker projection — loaded but NOT used during inference.
+        # (tts.projector_spk.* in HF checkpoint — defined but never called
+        # in openbmb/MiniCPM-o-4_5 modeling_minicpmo.py inference paths)
+        self.spk_projection = MiniCPMOTalkerResizeMLP(
             llm_dim=tts_config.llm_dim,
             intermediate_size=tts_config.llm_intermediate_size,
             hidden_size=tts_config.hidden_size,
@@ -197,44 +212,34 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
             self.language_model.make_empty_intermediate_tensors
         )
 
-    def project_thinker_outputs(
+    def build_conditioning(
         self,
-        thinker_text_embeds: torch.Tensor | None = None,
-        thinker_hidden_states: torch.Tensor | None = None,
+        thinker_token_ids: torch.Tensor,
+        thinker_hidden_states: torch.Tensor,
     ) -> torch.Tensor:
-        """Project thinker outputs to talker conditioning embeddings.
+        """Build hidden_text_merge conditioning from thinker outputs.
 
-        Implements hidden_text_merge: adds text embed projection and hidden
-        state projection to form the talker input conditioning.
+        Matches original MiniCPM-o conditioning:
+            tts_embeds = emb_text(token_ids) + normalize(semantic_projection(hidden_states))
 
         Args:
-            thinker_text_embeds:   [seq, llm_dim] text token embeddings from thinker
+            thinker_token_ids:     [seq] LLM token IDs from thinker
             thinker_hidden_states: [seq, llm_dim] hidden states from thinker LLM
 
         Returns:
             conditioning: [seq, talker_hidden_size]
         """
-        if thinker_text_embeds is None and thinker_hidden_states is None:
-            raise ValueError(
-                "At least one of thinker_text_embeds or thinker_hidden_states "
-                "must be provided."
-            )
+        # Text conditioning: emb_text maps LLM vocab token IDs → 768-dim
+        llm_embeds = self.emb_text(thinker_token_ids)
 
-        ref = thinker_text_embeds if thinker_text_embeds is not None else thinker_hidden_states
-        # Output always in talker hidden dim, not thinker llm_dim
-        conditioning = torch.zeros(
-            (*ref.shape[:-1], self.config.hidden_size),
-            device=ref.device,
-            dtype=ref.dtype,
-        )
+        # Hidden state conditioning: project 4096-dim → 768-dim
+        hidden_embeds = self.semantic_projection(thinker_hidden_states)
 
-        if thinker_text_embeds is not None:
-            conditioning = conditioning + self.text_projection(thinker_text_embeds)
+        # L2 normalization (when normalize_projected_hidden=True in config)
+        if self.config.normalize_projected_hidden:
+            hidden_embeds = F.normalize(hidden_embeds, p=2, dim=-1)
 
-        if thinker_hidden_states is not None:
-            conditioning = conditioning + self.hidden_projection(thinker_hidden_states)
-
-        return conditioning
+        return llm_embeds + hidden_embeds
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         """Embed codec token IDs via codec_embedding (used during AR decoding)."""
@@ -248,18 +253,7 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         inputs_embeds: torch.Tensor | None = None,
         **kwargs: object,
     ) -> torch.Tensor | IntermediateTensors:
-        """Forward pass through the Talker Llama model.
-
-        Args:
-            input_ids:             Codec token IDs from previous AR steps
-            positions:             Position IDs
-            intermediate_tensors:  PP intermediate tensors
-            inputs_embeds:         Pre-computed conditioning embeddings (from
-                                   stage_input_processor or project_thinker_outputs)
-
-        Returns:
-            hidden_states: [batch, seq, talker_hidden] — passed to codec_head
-        """
+        """Forward pass through the Talker Llama model."""
         return self.language_model.model(
             input_ids=input_ids,
             positions=positions,
@@ -268,14 +262,7 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         )
 
     def compute_logits(self, hidden_states: torch.Tensor) -> torch.Tensor:
-        """Compute audio codec token logits.
-
-        Args:
-            hidden_states: [batch, seq, hidden_size]
-
-        Returns:
-            logits: [batch, seq, num_audio_tokens]
-        """
+        """Compute audio codec token logits."""
         return self.codec_head(hidden_states)
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
@@ -311,8 +298,6 @@ class MiniCPMOTalkerForConditionalGeneration(nn.Module, SupportsPP):
         loader = AutoWeightsLoader(
             self,
             # Thinker and Code2Wav weights are handled by other stages.
-            # emb_text: separate TTS text embedding not present in vllm Talker
-            # (maps to "emb_text." via the "tts." catch-all).
-            skip_prefixes=["thinker.", "code2wav.", "emb_text."],
+            skip_prefixes=["thinker.", "code2wav."],
         )
         return loader.load_weights(_preprocess(weights))

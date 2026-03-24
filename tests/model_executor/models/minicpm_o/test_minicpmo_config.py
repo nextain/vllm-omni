@@ -29,7 +29,7 @@ class TestMiniCPMTTSConfig:
         assert cfg.num_hidden_layers == 20
 
     def test_default_num_audio_tokens(self, cfg):
-        """CosyVoice3 codec vocab: 6561 tokens + 1 EOS = 6562."""
+        """CosyVoice2 codec vocab: 6561 tokens + 1 EOS = 6562."""
         assert cfg.num_audio_tokens == 6562
 
     def test_default_num_vq(self, cfg):
@@ -65,7 +65,7 @@ class TestMiniCPMVSliceConfig:
 
         cfg = MiniCPMVSliceConfig()
         assert cfg.patch_size == 14
-        assert cfg.max_slice_nums == 9
+        assert cfg.max_slice_nums == 1  # matches HF config.json
         assert cfg.scale_resolution == 448
 
     def test_model_type(self):
@@ -115,7 +115,7 @@ class TestMiniCPMOConfig:
         from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import MiniCPMVSliceConfig
 
         assert isinstance(cfg.slice_config, MiniCPMVSliceConfig)
-        assert cfg.slice_config.max_slice_nums == 9  # MiniCPMVSliceConfig default
+        assert cfg.slice_config.max_slice_nums == 1  # matches HF config.json
 
     def test_query_num(self, cfg):
         assert cfg.query_num == 64

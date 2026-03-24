@@ -30,6 +30,30 @@ def _validate_stage_inputs(stage_list, engine_input_source):
 # =========================
 
 
+def _find_tts_bound(
+    token_ids: list[int],
+    tts_bos_id: int = 151703,
+    tts_eos_id: int = 151704,
+) -> tuple[int, int | None]:
+    """Find the TTS content boundary in the thinker token sequence.
+
+    Returns (start, end) where start is the position AFTER <|tts_bos|>
+    and end is the position OF <|tts_eos|> (or None if not found).
+    This matches the original MiniCPM-o slicing: [tts_bos_idx+1 : tts_eos_idx].
+    """
+    tts_bos_idx = -1
+    tts_eos_idx = None
+    for i, tok in enumerate(token_ids):
+        if tok == tts_bos_id:
+            tts_bos_idx = i + 1  # +1 to skip the marker itself
+        elif tok == tts_eos_id:
+            tts_eos_idx = i
+    if tts_bos_idx < 0:
+        # No TTS boundary found — use entire sequence as fallback
+        tts_bos_idx = 0
+    return tts_bos_idx, tts_eos_idx
+
+
 def thinker2talker(
     stage_list: list[Any],
     engine_input_source: list[int],
@@ -38,18 +62,14 @@ def thinker2talker(
 ) -> list[OmniTokensPrompt]:
     """Build talker inputs from thinker outputs.
 
-    Extracts ``thinker_text_embeds`` and ``thinker_hidden_states`` from the
-    thinker's multimodal_output dict and packages them as ``additional_information``
-    for the talker stage.  The talker's ``talker_preprocess`` uses these to build
-    hidden_text_merge conditioning:
+    Extracts ``thinker_hidden_states`` and thinker token IDs from the
+    thinker's output, applies tts_bound filtering (only the content between
+    <|tts_bos|> and <|tts_eos|>), and packages them as
+    ``additional_information`` for the talker stage.
 
-        talker_input[t] = text_projection(thinker_text_embeds[t])
-                        + hidden_projection(thinker_hidden_states[t])
-                        + codec_embedding(input_ids[t])
-
-    The talker's prompt length equals the total number of thinker tokens
-    (prompt + generated), because there is a 1:1 correspondence between
-    thinker positions and talker codec-generating positions.
+    The talker's ``talker_preprocess`` uses these to build
+    hidden_text_merge conditioning (matching original MiniCPM-o):
+        tts_embeds = emb_text(token_ids) + normalize(semantic_projection(hidden_states))
     """
     thinker_outputs = _validate_stage_inputs(stage_list, engine_input_source)
     talker_inputs: list[OmniTokensPrompt] = []
@@ -59,53 +79,49 @@ def thinker2talker(
     for thinker_output in thinker_outputs:
         output = thinker_output.outputs[0]
 
-        # multimodal_output is already sliced per-request and moved to CPU
-        # by gpu_ar_model_runner.  Shape: [num_thinker_tokens, thinker_hidden].
-        import logging as _logging
-        _logging.getLogger(__name__).warning(
-            "[DBG thinker2talker] output type=%s, hasattr(output,'multimodal_output')=%s, "
-            "multimodal_output=%s",
-            type(output).__name__,
-            hasattr(output, "multimodal_output"),
-            getattr(output, "multimodal_output", "MISSING"),
-        )
-        thinker_text_embeds = output.multimodal_output.get("thinker_text_embeds")
         thinker_hidden_states = output.multimodal_output.get("thinker_hidden_states")
-
-        if thinker_text_embeds is None and thinker_hidden_states is None:
+        if thinker_hidden_states is None:
             raise RuntimeError(
-                "thinker stage did not emit 'thinker_text_embeds' or "
-                "'thinker_hidden_states' in multimodal_output.  "
-                "Check that model_stage='thinker' is running with the "
-                "MiniCPMOForConditionalGeneration model."
+                "thinker stage did not emit 'thinker_hidden_states' in "
+                "multimodal_output. Check that model_stage='thinker' is "
+                "running with the MiniCPMOForConditionalGeneration model."
             )
 
-        # Total thinker tokens = number of accumulated hidden states.
-        # Using the actual hidden-states length rather than
-        # prompt_token_ids + output.token_ids avoids off-by-one issues caused
-        # by EOS token inclusion/exclusion in output.token_ids.
-        # Fallback to prompt+output count when hidden states are unavailable.
-        _ref = thinker_hidden_states if thinker_hidden_states is not None else thinker_text_embeds
-        if isinstance(_ref, torch.Tensor) and _ref.ndim >= 1:
-            total_thinker_tokens = _ref.shape[0]
-        else:
-            total_thinker_tokens = len(thinker_output.prompt_token_ids) + len(output.token_ids)
+        # Reconstruct full token sequence (prompt + generated)
+        full_token_ids = list(thinker_output.prompt_token_ids) + list(output.token_ids)
 
-        info: dict[str, Any] = {}
-        if thinker_text_embeds is not None:
-            info["thinker_text_embeds"] = (
-                thinker_text_embeds.detach().to(device=device, dtype=torch.float)
-            )
-        if thinker_hidden_states is not None:
-            info["thinker_hidden_states"] = (
-                thinker_hidden_states.detach().to(device=device, dtype=torch.float)
-            )
+        # Find TTS content boundary: [tts_bos+1 : tts_eos]
+        # Original only passes the speech-relevant portion to the talker.
+        tts_start, tts_end = _find_tts_bound(full_token_ids)
+
+        # Slice hidden states and token IDs to TTS-relevant portion
+        tts_token_ids = full_token_ids[tts_start:tts_end]
+        tts_hidden = thinker_hidden_states[tts_start:tts_end]
+
+        num_tts_tokens = len(tts_token_ids)
+        if num_tts_tokens == 0:
+            # Fallback: no TTS markers found, use all tokens
+            tts_token_ids = full_token_ids
+            tts_hidden = thinker_hidden_states
+            num_tts_tokens = len(tts_token_ids)
+
+        info: dict[str, Any] = {
+            "thinker_token_ids": torch.tensor(
+                tts_token_ids, dtype=torch.long, device=device,
+            ),
+            "thinker_hidden_states": (
+                tts_hidden.detach().to(device=device, dtype=torch.float)
+            ),
+        }
+
+        # +2 for text_eos and audio_bos boundary tokens appended in talker_preprocess
+        talker_prompt_len = num_tts_tokens + 2
 
         talker_inputs.append(
             OmniTokensPrompt(
                 # Placeholder IDs — talker_preprocess will replace them with
-                # projected thinker embeddings before the Llama backbone runs.
-                prompt_token_ids=[0] * total_thinker_tokens,
+                # conditioning embeddings before the Llama backbone runs.
+                prompt_token_ids=[0] * talker_prompt_len,
                 additional_information=info,
                 multi_modal_data=None,
                 mm_processor_kwargs=None,
@@ -125,6 +141,10 @@ def thinker2talker_async_chunk(
 
     Called once per thinker decode step to pass freshly generated token
     embeddings to the talker stage without waiting for the full thinker run.
+
+    NOTE: This function is not registered in pipeline.yaml (async_chunk=false)
+    and needs to be updated to use thinker_token_ids + build_conditioning()
+    when async_chunk mode is enabled.  Currently kept for future use.
     """
     request_id = request.external_req_id
     chunk_id = transfer_manager.put_req_chunk.get(request_id, 0)
@@ -188,8 +208,10 @@ def talker2code2wav(
 
     for talker_output in talker_outputs:
         output = talker_output.outputs[0]
-        # Skip BOS token (first generated token is the codec BOS sentinel)
-        codec_codes = list(output.token_ids[1:])
+        # All generated tokens are valid codec tokens (audio_bos is in the
+        # conditioning, not in the generated output). EOS token (6561) is
+        # excluded by the stop_token_ids mechanism.
+        codec_codes = list(output.token_ids)
         code2wav_inputs.append(
             OmniTokensPrompt(
                 prompt_token_ids=codec_codes,
