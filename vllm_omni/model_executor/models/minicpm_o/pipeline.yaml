@@ -28,6 +28,12 @@ stages:
     # A40 46GB + bitsandbytes INT4: Thinker ~5GB model → 25% (11.1GB) for model+KV
     # Stage-1+2 combined use ~31GB, leaving ~13GB free for Stage-0 pre-check
     gpu_memory_utilization: 0.25
+    engine_args:
+      # MiniCPM-o 4.5 processes video as image-frame sequences. The current
+      # SigLIP integration expects batched tensors; video inputs arrive as
+      # list[Tensor] and are not supported yet. Disable video MM profiling so
+      # the encoder cache is sized for image (batched tensor) inputs only.
+      limit_mm_per_prompt: {video: 0}
 
   - stage_id: 1
     model_stage: talker
@@ -39,6 +45,13 @@ stages:
     final_output: false
     # Talker (LlamaAR) — 22% (10GB)
     gpu_memory_utilization: 0.22
+    engine_args:
+      # Talker has no vision/audio encoders; disable MM profiling to avoid embed_multimodal calls.
+      limit_mm_per_prompt: {image: 0, video: 0}
+      # Talker (LlamaAR) uses non-standard hidden sizes; BnB quantization fails.
+      # Load in default precision (BF16) instead.
+      quantization: null
+      load_format: auto
 
   - stage_id: 2
     model_stage: code2wav
@@ -51,3 +64,10 @@ stages:
     final_output_type: audio
     # Code2Wav: CUDA overhead + INT4 model > 18%. Use 22% (9.77GB)
     gpu_memory_utilization: 0.22
+    engine_args:
+      # Code2Wav has no vision/audio encoders; disable MM profiling.
+      limit_mm_per_prompt: {image: 0, video: 0}
+      # Code2Wav (CosyVoice2 DiT + HiFi-GAN) has no standard attention layers;
+      # BnB quantization finds no target modules and asserts. Load in BF16.
+      quantization: null
+      load_format: auto
