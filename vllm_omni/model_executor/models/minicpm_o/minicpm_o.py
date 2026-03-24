@@ -94,6 +94,14 @@ class MiniCPMOForConditionalGeneration(
       - Code2Wav: separate flow.pt + hift.pt files in the model directory
     """
 
+    # Required by BitsAndBytes quantization loader (_verify_model_compatibility).
+    # Reflects the packed modules used by Thinker (Qwen3) and Talker (Llama) —
+    # the two stages that contain fused linear layers.
+    packed_modules_mapping = {
+        "qkv_proj": ["q_proj", "k_proj", "v_proj"],
+        "gate_up_proj": ["gate_proj", "up_proj"],
+    }
+
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
         self.have_multimodal_outputs = True
@@ -207,12 +215,15 @@ class MiniCPMOForConditionalGeneration(
         )
 
     def embed_multimodal(self, **kwargs: object):
-        """Delegate multimodal embedding to the thinker (vision + audio only)."""
+        """Delegate multimodal embedding to the thinker (vision + audio only).
+
+        Talker and Code2Wav stages have no multimodal encoder; return empty so
+        that callers gracefully skip encoding.
+        Use --skip-mm-profiling when serving non-thinker stages to avoid the
+        profiling sanity check (which expects a non-zero item count).
+        """
         if self.model_stage != "thinker":
-            raise RuntimeError(
-                "embed_multimodal is only valid for the thinker stage; "
-                f"current stage: {self.model_stage!r}"
-            )
+            return []
         return self.thinker.embed_multimodal(**kwargs)
 
     # ==================== Forward ====================
