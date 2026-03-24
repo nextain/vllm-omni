@@ -220,8 +220,25 @@ class MiniCPMOVisionEncoder(nn.Module):
         return self.resampler(visual_features, tgt_sizes)
 
 
+class MiniCPMOAudioProjectionMLP(nn.Module):
+    """2-layer MLP projecting Whisper d_model → LLM hidden dim.
+
+    Matches HF checkpoint: audio_projection_layer.linear1 (d_model→hidden_size)
+    and audio_projection_layer.linear2 (hidden_size→hidden_size), both with bias.
+    """
+
+    def __init__(self, d_model: int, hidden_size: int):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, hidden_size, bias=True)
+        self.linear2 = nn.Linear(hidden_size, hidden_size, bias=True)
+        self.act_fn = nn.SiLU()
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.linear2(self.act_fn(self.linear1(x)))
+
+
 class MiniCPMOAudioEncoder(nn.Module):
-    """Whisper encoder + linear projection for MiniCPM-o.
+    """Whisper encoder + 2-layer MLP projection for MiniCPM-o.
 
     Encodes mel-spectrogram audio features and projects to LLM embedding
     dimension with average pooling (audio_pool_step).
@@ -246,7 +263,12 @@ class MiniCPMOAudioEncoder(nn.Module):
             vllm_config=audio_vllm_config,
             prefix=maybe_prefix(prefix, "encoder"),
         )
-        self.projection = nn.Linear(audio_config.d_model, llm_hidden_size, bias=False)
+        # HF checkpoint: audio_projection_layer.linear1/linear2 (both with bias).
+        # Mapper: audio_projection_layer.* → audio_encoder.projection.*
+        self.projection = MiniCPMOAudioProjectionMLP(
+            d_model=audio_config.d_model,
+            hidden_size=llm_hidden_size,
+        )
 
     def forward(self, input_features: list[torch.Tensor]) -> list[torch.Tensor]:
         """
@@ -311,9 +333,6 @@ class MiniCPMOThinkerForConditionalGeneration(
             "llm.model.": "language_model.model.",
             "llm.": "language_model.",
         },
-        # vllm's WhisperEncoderLayer wraps fc1/fc2 in an mlp sub-module.
-        # HF checkpoint stores them as .fc1./.fc2.; vllm uses .mlp.fc1./.mlp.fc2.
-        orig_to_new_substr={".fc1.": ".mlp.fc1.", ".fc2.": ".mlp.fc2."},
     )
 
     packed_modules_mapping = {
@@ -465,9 +484,28 @@ class MiniCPMOThinkerForConditionalGeneration(
         return hidden_states, inputs_embeds
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        def _preprocess(
+            ws: Iterable[tuple[str, torch.Tensor]],
+        ) -> Iterable[tuple[str, torch.Tensor]]:
+            """Scope fc1/fc2 → mlp.fc1/mlp.fc2 remapping to APM keys only.
+
+            HF Whisper checkpoint stores FFN as bare ``fc1``/``fc2``
+            (e.g. ``apm.layers.0.fc1.weight``), but vllm's WhisperEncoder
+            wraps the FFN in an ``mlp`` submodule (``layers.0.mlp.fc1``).
+
+            Applying this globally would corrupt VPM keys that already use
+            ``mlp.fc1`` (SigLIP's FFN is already named ``mlp.fc1`` in the
+            checkpoint).  So we restrict the rename to ``apm.layers.*`` only.
+            """
+            for name, param in ws:
+                if name.startswith("apm.layers."):
+                    name = name.replace(".fc1.", ".mlp.fc1.")
+                    name = name.replace(".fc2.", ".mlp.fc2.")
+                yield name, param
+
         loader = AutoWeightsLoader(
             self,
             # TTS weights are loaded by the Talker stage
             skip_prefixes=["tts."],
         )
-        return loader.load_weights(weights, mapper=self.hf_to_vllm_mapper)
+        return loader.load_weights(_preprocess(weights), mapper=self.hf_to_vllm_mapper)
