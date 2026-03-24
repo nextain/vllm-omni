@@ -33,6 +33,7 @@ from vllm.model_executor.models.interfaces import (
 from vllm.model_executor.models.module_mapping import MultiModelKeys
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
 from vllm.model_executor.models.siglip import SiglipVisionTransformer
+from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.utils import (
     AutoWeightsLoader,
     WeightsMapper,
@@ -294,6 +295,38 @@ class MiniCPMOAudioEncoder(nn.Module):
 
         # Return as list (one tensor per batch element)
         return list(projected.unbind(dim=0))
+
+    def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
+        """Load weights, stacking WhisperEncoder q/k/v into qkv_proj."""
+        stacked_params_mapping = [
+            # (param_name, shard_name, shard_id)
+            (".self_attn.qkv_proj", ".self_attn.q_proj", "q"),
+            (".self_attn.qkv_proj", ".self_attn.k_proj", "k"),
+            (".self_attn.qkv_proj", ".self_attn.v_proj", "v"),
+        ]
+        params_dict = dict(self.named_parameters())
+        loaded_params: set[str] = set()
+
+        for name, loaded_weight in weights:
+            for param_name, weight_name, shard_id in stacked_params_mapping:
+                if weight_name not in name:
+                    continue
+                name = name.replace(weight_name, param_name)
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                param = params_dict[name]
+                weight_loader = param.weight_loader
+                weight_loader(param, loaded_weight, shard_id)
+                break
+            else:
+                if name.endswith(".bias") and name not in params_dict:
+                    continue
+                param = params_dict[name]
+                weight_loader = getattr(param, "weight_loader", default_weight_loader)
+                weight_loader(param, loaded_weight)
+            loaded_params.add(name)
+
+        return loaded_params
 
 
 class MiniCPMOThinkerForConditionalGeneration(

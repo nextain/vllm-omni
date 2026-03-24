@@ -15,14 +15,41 @@ import sys
 import os
 import copy
 import glob
+import socket
 import traceback
 import safetensors.torch
 import torch
+import torch.distributed as dist
 
 MODEL_DIR = sys.argv[1] if len(sys.argv) > 1 else (
     "/workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots/"
     "44151b35f1b232a280bda5a87ea1a7575d5433fc"
 )
+
+# ── one-time distributed + vllm parallel init ─────────────────────────────
+# vllm models require:
+#   1) torch.distributed initialized (even for single-process)
+#   2) model-parallel groups set up (TP=1, PP=1)  — inside set_current_vllm_config ctx
+#   3) set_current_vllm_config() context during model construction
+from vllm.config import DeviceConfig, VllmConfig, set_current_vllm_config
+from vllm.distributed.parallel_state import initialize_model_parallel
+
+if not dist.is_initialized():
+    with socket.socket() as s:
+        s.bind(("", 0))
+        free_port = s.getsockname()[1]
+    os.environ.setdefault("MASTER_ADDR", "localhost")
+    os.environ.setdefault("MASTER_PORT", str(free_port))
+    dist.init_process_group(backend="gloo", world_size=1, rank=0)
+
+# Build a minimal real VllmConfig — model_config=None so no arch validation.
+# initialize_model_parallel() also calls get_current_vllm_config(), so we must
+# call it inside the set_current_vllm_config context.
+_global_vllm_config = VllmConfig(device_config=DeviceConfig(device="cpu"))
+with set_current_vllm_config(_global_vllm_config):
+    from vllm.distributed.parallel_state import init_distributed_environment
+    init_distributed_environment(world_size=1, rank=0, local_rank=0, backend="gloo")
+    initialize_model_parallel(tensor_model_parallel_size=1, pipeline_model_parallel_size=1)
 
 # ── load all HF weights ────────────────────────────────────────────────────
 print(f"Loading weights from {MODEL_DIR} ...", flush=True)
@@ -120,6 +147,10 @@ class FakeVllmConfig:
         # CacheConfig stub
         cache = _FakeAttr()
         cache.cache_dtype = "auto"
+        cache.sliding_window = None   # triton_attn does (sliding_window - 1) if not None
+        cache.block_size = 16
+        cache.calculate_kv_scales = False
+        cache.enable_prefix_caching = False
         self.cache_config = cache
 
         # ParallelConfig stub
@@ -206,7 +237,8 @@ try:
         MiniCPMOForConditionalGeneration,
     )
     vllm_config = make_fake_vllm_config("thinker", MODEL_DIR)
-    model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
+    with set_current_vllm_config(_global_vllm_config):
+        model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
     model.eval()
 
     loaded = model.load_weights(iter_weights())
@@ -220,7 +252,8 @@ except Exception as e:
 print("\n=== Stage 1: Talker ===", flush=True)
 try:
     vllm_config = make_fake_vllm_config("talker", MODEL_DIR)
-    model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
+    with set_current_vllm_config(_global_vllm_config):
+        model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
     model.eval()
 
     loaded = model.load_weights(iter_weights())
@@ -234,7 +267,8 @@ except Exception as e:
 print("\n=== Stage 2: Code2Wav ===", flush=True)
 try:
     vllm_config = make_fake_vllm_config("code2wav", MODEL_DIR)
-    model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
+    with set_current_vllm_config(_global_vllm_config):
+        model = MiniCPMOForConditionalGeneration(vllm_config=vllm_config)
     model.eval()
 
     loaded = model.load_weights(iter_weights())
