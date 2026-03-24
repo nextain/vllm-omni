@@ -84,19 +84,24 @@ class OmniGPUWorkerBase(GPUWorker):
                 scope="local",
             )
         else:
-            # NVML unavailable: use profiling data as conservative fallback
-            profiled_usage = (
-                int(self.model_runner.model_memory_usage)
-                + profile_result.torch_peak_increase
-                + profile_result.non_torch_increase
-            )
+            # NVML unavailable: use steady-state torch memory after profiling.
+            # torch_peak_increase inflates with transient torch.compile/AOT
+            # compilation buffers that are freed after compilation completes.
+            # after_profile.torch_memory = memory_reserved() after gc+empty_cache,
+            # which reflects model weights + persistent buffers only (compilation
+            # artifacts are freed, so memory_reserved ≈ memory_allocated at this point).
+            steady_state_torch = profile_result.after_profile.torch_memory
+            non_torch = max(0, profile_result.non_torch_increase)
+            profiled_usage = steady_state_torch + non_torch
             self.available_kv_cache_memory_bytes = max(0, self.requested_memory - profiled_usage)
             logger.debug(
-                "Profiling fallback (PID %d, GPU %d): requested=%s, profiled=%s, available=%s",
+                "Profiling fallback (PID %d, GPU %d): requested=%s, "
+                "steady_torch=%s, non_torch=%s, available=%s",
                 os.getpid(),
                 self.local_rank,
                 format_gib(self.requested_memory),
-                format_gib(profiled_usage),
+                format_gib(steady_state_torch),
+                format_gib(non_torch),
                 format_gib(self.available_kv_cache_memory_bytes),
             )
             logger.info_once(

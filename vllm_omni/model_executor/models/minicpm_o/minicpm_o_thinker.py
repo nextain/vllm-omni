@@ -444,29 +444,78 @@ class MiniCPMOThinkerForConditionalGeneration(
             tower_model=["visual.encoder.", "audio_encoder."],
         )
 
+    def _embed_pixel_values(
+        self,
+        pixel_values: torch.Tensor | list[torch.Tensor],
+        tgt_sizes: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, ...]:
+        """Run SigLIP + resampler on a batch of image patches.
+
+        pixel_values may be:
+          - torch.Tensor [batch, C, H, W] — all patches same spatial size
+          - list[torch.Tensor] — per-item list when spatial dims differ
+            Each element is [num_slices, C, H, W]; tgt_sizes is [total_slices, 2]
+        """
+        if isinstance(pixel_values, (list, tuple)):
+            results: list[torch.Tensor] = []
+            slice_offset = 0
+            for pv in pixel_values:
+                if pv.dim() == 3:
+                    pv = pv.unsqueeze(0)  # [1, C, H, W]
+                num_slices = pv.shape[0]
+                if tgt_sizes is not None:
+                    ts = tgt_sizes[slice_offset : slice_offset + num_slices]
+                else:
+                    h = w = int(pv.shape[-1] ** 0.5)
+                    ts = torch.tensor([[h, w]] * num_slices, device=pv.device)
+                visual_embed = self.visual(pv, ts)  # [num_slices, query_num, llm_hidden]
+                results.append(visual_embed.flatten(0, 1))  # [num_slices*query_num, llm_hidden]
+                slice_offset += num_slices
+            return tuple(results)
+
+        # Batched tensor path (same spatial dims)
+        if tgt_sizes is None:
+            n_patches = pixel_values.shape[1]
+            h = w = int(n_patches**0.5)
+            tgt_sizes = torch.tensor(
+                [[h, w]] * pixel_values.shape[0],
+                device=pixel_values.device,
+            )
+        visual_embeds = self.visual(pixel_values, tgt_sizes)
+        return tuple(visual_embeds.unbind(dim=0))
+
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
-        """Process vision and audio inputs into embeddings."""
+        """Process vision and audio inputs into embeddings.
+
+        Handles three kwargs layouts emitted by MiniCPMVMultiModalProcessor:
+          - image: pixel_values + tgt_sizes
+          - video: video_pixel_values + video_tgt_sizes (same tensor format)
+          - audio: input_audio_features
+        """
         multimodal_embeddings: tuple[torch.Tensor, ...] = ()
 
-        # Vision
-        if "pixel_values" in kwargs and kwargs["pixel_values"] is not None:
-            pixel_values: torch.Tensor = kwargs["pixel_values"]  # type: ignore
+        # Images
+        pixel_values = kwargs.get("pixel_values")
+        if pixel_values is not None:
             tgt_sizes: torch.Tensor | None = kwargs.get("tgt_sizes")  # type: ignore
-            if tgt_sizes is None:
-                # Fallback: assume square images
-                n_patches = pixel_values.shape[1]
-                h = w = int(n_patches**0.5)
-                tgt_sizes = torch.tensor(
-                    [[h, w]] * pixel_values.shape[0],
-                    device=pixel_values.device,
-                )
-            visual_embeds = self.visual(pixel_values, tgt_sizes)
-            multimodal_embeddings += tuple(visual_embeds.unbind(dim=0))
+            multimodal_embeddings += self._embed_pixel_values(
+                pixel_values,  # type: ignore[arg-type]
+                tgt_sizes,
+            )
+
+        # Videos — each item is a batch of frames; processed identically to images
+        video_pixel_values = kwargs.get("video_pixel_values")
+        if video_pixel_values is not None:
+            video_tgt_sizes: torch.Tensor | None = kwargs.get("video_tgt_sizes")  # type: ignore
+            multimodal_embeddings += self._embed_pixel_values(
+                video_pixel_values,  # type: ignore[arg-type]
+                video_tgt_sizes,
+            )
 
         # Audio
-        if "input_audio_features" in kwargs and kwargs["input_audio_features"] is not None:
-            audio_features: list[torch.Tensor] = kwargs["input_audio_features"]  # type: ignore
-            audio_embeds = self.audio_encoder(audio_features)
+        input_audio_features = kwargs.get("input_audio_features")
+        if input_audio_features is not None:
+            audio_embeds = self.audio_encoder(input_audio_features)
             multimodal_embeddings += tuple(audio_embeds)
 
         return list(multimodal_embeddings)

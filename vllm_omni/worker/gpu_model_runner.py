@@ -1252,8 +1252,11 @@ class OmniGPUModelRunner(GPUModelRunner):
                 req_input_ids, req_embeds, update_dict = self.model.preprocess(
                     input_ids=input_ids[s:e], input_embeds=embed_slice, **req_infos
                 )
-                if inputs_embeds is None:
-                    inputs_embeds = torch.empty(
+                if inputs_embeds is None or inputs_embeds.shape[-1] != req_embeds.shape[-1]:
+                    # Create a fresh buffer when inputs_embeds is absent or has a
+                    # different hidden dim than req_embeds (e.g. MiniCPM-o Talker:
+                    # main model hidden_size=4096 vs talker hidden_size=768).
+                    inputs_embeds = torch.zeros(
                         (input_ids.shape[0], req_embeds.shape[-1]),
                         device=req_embeds.device,
                         dtype=req_embeds.dtype,

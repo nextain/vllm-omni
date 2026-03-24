@@ -331,6 +331,13 @@ def load_and_resolve_stage_configs(
                     model,
                 )
                 stage_configs = [s.to_omegaconf() for s in new_stage_configs]
+                # When config_path is None (no legacy stage_configs YAML exists),
+                # set it to the pipeline.yaml so connector auto-initialization
+                # can read stage edges from the new stages: format.
+                if config_path is None:
+                    pipeline_path = StageConfigFactory.get_pipeline_yaml_path(model, trust_remote_code)
+                    if pipeline_path is not None:
+                        config_path = str(pipeline_path)
             elif default_stage_cfg_factory is not None:
                 default_stage_cfg = default_stage_cfg_factory()
                 stage_configs = create_config(default_stage_cfg)

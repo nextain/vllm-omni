@@ -147,6 +147,18 @@ def load_omni_transfer_config(
 
     # Parse stage-level connectors
     stage_args = config_dict.get("stage_args", [])
+    # Also support new pipeline.yaml format (stages: with input_sources:)
+    # when the legacy stage_args: key is absent.
+    if not stage_args:
+        stages_new_format = config_dict.get("stages", [])
+        if stages_new_format:
+            stage_args = [
+                {
+                    "stage_id": s.get("stage_id", i),
+                    "engine_input_source": s.get("input_sources", []),
+                }
+                for i, s in enumerate(stages_new_format)
+            ]
     expected_edges: set[tuple[str, str]] = set()
     for stage_config in stage_args:
         stage_id = str(stage_config["stage_id"])
