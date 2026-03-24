@@ -80,8 +80,16 @@ def thinker2talker(
                 "MiniCPMOForConditionalGeneration model."
             )
 
-        # Total thinker tokens = prompt tokens + generated tokens
-        total_thinker_tokens = len(thinker_output.prompt_token_ids) + len(output.token_ids)
+        # Total thinker tokens = number of accumulated hidden states.
+        # Using the actual hidden-states length rather than
+        # prompt_token_ids + output.token_ids avoids off-by-one issues caused
+        # by EOS token inclusion/exclusion in output.token_ids.
+        # Fallback to prompt+output count when hidden states are unavailable.
+        _ref = thinker_hidden_states if thinker_hidden_states is not None else thinker_text_embeds
+        if isinstance(_ref, torch.Tensor) and _ref.ndim >= 1:
+            total_thinker_tokens = _ref.shape[0]
+        else:
+            total_thinker_tokens = len(thinker_output.prompt_token_ids) + len(output.token_ids)
 
         info: dict[str, Any] = {}
         if thinker_text_embeds is not None:

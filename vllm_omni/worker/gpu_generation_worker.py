@@ -83,7 +83,23 @@ class GPUGenerationWorker(OmniWorkerMixin, OmniGPUWorkerBase):
 
             # take current memory snapshot
             self.init_snapshot = init_snapshot = MemorySnapshot(device=self.device)
-            self.requested_memory = request_memory(init_snapshot, self.cache_config)
+            # In a multi-stage pipeline, stages initialize concurrently on the
+            # same GPU.  The strict free-memory check fails when other stages
+            # hold peak initialization allocations.  Relax to a warning so all
+            # stages proceed; actual OOM will surface at load_model() instead.
+            try:
+                self.requested_memory = request_memory(init_snapshot, self.cache_config)
+            except ValueError as e:
+                requested = int(
+                    init_snapshot.total_memory * self.cache_config.gpu_memory_utilization
+                )
+                logger.warning(
+                    "Memory check failed (may be transient multi-stage contention): %s. "
+                    "Proceeding with requested_memory=%s GiB.",
+                    e,
+                    format_gib(requested),
+                )
+                self.requested_memory = requested
             logger.debug("worker init memory snapshot: %r", self.init_snapshot)
             logger.debug("worker requested memory: %sGiB", format_gib(self.requested_memory))
         else:

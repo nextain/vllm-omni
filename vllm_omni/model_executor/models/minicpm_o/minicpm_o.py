@@ -207,8 +207,14 @@ class MiniCPMOForConditionalGeneration(
                 is_multimodal=is_multimodal,
             )
         if self.model_stage == "talker":
-            # Talker's embed_input_ids only accepts input_ids (codec tokens).
-            return self.talker.embed_input_ids(input_ids)
+            # Return a dummy tensor sized to model_config.hidden_size (4096).
+            # The pre-allocated inputs_embeds buffer in GPUModelRunner is sized
+            # for the main model (4096-wide).  talker_preprocess (has_preprocess=True)
+            # will overwrite this slice with the correct 768-wide conditioning.
+            # forward() falls back to talker.embed_input_ids() if shape[-1] != 768.
+            return torch.zeros_like(input_ids).reshape(-1, 1).repeat(
+                1, self.vllm_config.model_config.get_hidden_size()
+            )
         # code2wav: no token embeddings; return a zero dummy tensor.
         return torch.zeros_like(input_ids).reshape(-1, 1).repeat(
             1, self.vllm_config.model_config.get_hidden_size()
@@ -250,8 +256,19 @@ class MiniCPMOForConditionalGeneration(
 
         # ---- Talker ----
         elif self.model_stage == "talker":
-            # inputs_embeds pre-built by talker_preprocess (CustomProcessMixin)
-            if inputs_embeds is None and input_ids is not None:
+            # During real inference, talker_preprocess (CustomProcessMixin) builds
+            # correct 768-wide embeddings (codec + thinker conditioning) and passes
+            # them via inputs_embeds.
+            # During profile_run/_dummy_run, the model runner passes its pre-allocated
+            # inputs_embeds buffer, which is sized for the main model (4096-wide) and
+            # is incompatible with Talker's LlamaAR (hidden_size=768).
+            # Fall back to plain codec embeddings whenever shape is wrong or missing.
+            talker_hidden = self.config.tts_config.hidden_size
+            if (
+                inputs_embeds is None
+                or input_ids is None
+                or inputs_embeds.shape[-1] != talker_hidden
+            ):
                 inputs_embeds = self.talker.embed_input_ids(input_ids)
 
             return self.talker(
@@ -321,7 +338,9 @@ class MiniCPMOForConditionalGeneration(
             return OmniOutput(
                 text_hidden_states=None,
                 multimodal_outputs={
-                    "model_outputs": [t.reshape(1, -1) for t in audio_tensors]
+                    # Key "audio" matches serving_chat.py _create_audio_choice
+                    # which reads: multimodal_output.get("audio")
+                    "audio": [t.reshape(1, -1) for t in audio_tensors]
                 },
             )
 

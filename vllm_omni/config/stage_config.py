@@ -235,6 +235,18 @@ class StageConfigFactory:
     }
 
     @classmethod
+    def get_pipeline_yaml_path(cls, model: str, trust_remote_code: bool = True) -> Path | None:
+        """Return the pipeline.yaml path for the model, or None if not found."""
+        model_type, _ = cls._auto_detect_model_type(model, trust_remote_code=trust_remote_code)
+        if model_type is None:
+            return None
+        pipeline_dir = cls.PIPELINE_MODELS.get(model_type)
+        if pipeline_dir is None:
+            return None
+        path = get_pipeline_path(pipeline_dir, "pipeline.yaml")
+        return path if path.exists() else None
+
+    @classmethod
     def create_from_model(
         cls,
         model: str,
@@ -390,10 +402,30 @@ class StageConfigFactory:
             input_sources = list(input_sources)
 
             # Collect YAML-level runtime defaults (e.g. per-stage gpu_memory_utilization)
-            _YAML_RUNTIME_KEYS = ("gpu_memory_utilization", "max_model_len", "max_num_seqs")
+            _YAML_RUNTIME_KEYS = (
+                "gpu_memory_utilization",
+                "max_model_len",
+                "max_num_seqs",
+                # enable_prefix_caching=False is required for attention-free stages
+                # (e.g. Code2Wav / diffusion) so that KVCacheCoordinatorNoPrefixCache
+                # is selected instead of HybridKVCacheCoordinator, which asserts
+                # len(attention_groups) > 1 and fails when the model has 0 KV cache groups.
+                "enable_prefix_caching",
+                # enforce_eager=True disables CUDA graph capture for stages whose
+                # embedding dim differs from model_config.hidden_size (e.g. MiniCPM-o
+                # Talker: main model 4096 vs talker LlamaAR 768).
+                "enforce_eager",
+            )
             yaml_defaults = {
                 k: stage_data.get(k) for k in _YAML_RUNTIME_KEYS if stage_data.get(k) is not None
             }
+            # Also merge any engine_args: nested dict from the YAML (e.g. limit_mm_per_prompt)
+            yaml_engine_args = stage_data.get("engine_args", None)
+            if yaml_engine_args is not None:
+                from omegaconf import OmegaConf
+                extra = OmegaConf.to_container(yaml_engine_args, resolve=True) if hasattr(yaml_engine_args, "_metadata") else dict(yaml_engine_args)
+                for k, v in extra.items():
+                    yaml_defaults.setdefault(k, v)
 
             stage = StageConfig(
                 stage_id=stage_data.stage_id,

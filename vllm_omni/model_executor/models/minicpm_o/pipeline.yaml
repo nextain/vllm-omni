@@ -25,8 +25,9 @@ stages:
     # Must forward thinker_hidden_states to Stage-1 Talker via multimodal_output.
     # Without this, output_strip clears multimodal for final_output_type=text stages.
     preserve_multimodal: true
-    # A40 46GB + BF16: Thinker (Qwen3-7B) ~14GB → 38% (17.3GB) for model+KV
-    gpu_memory_utilization: 0.38
+    # A40 46GB + BF16: Thinker (Qwen3-7B) weights=16.83GB → 50% (23GB) for model+KV.
+    # 38% (17.3GB) was too low: after weights load, no room for profile activation peak.
+    gpu_memory_utilization: 0.50
     engine_args:
       # MiniCPM-o 4.5 processes video as image-frame sequences. The current
       # SigLIP integration expects batched tensors; video inputs arrive as
@@ -44,6 +45,13 @@ stages:
     final_output: false
     # Talker (LlamaAR) BF16 — 15% (6.8GB)
     gpu_memory_utilization: 0.15
+    # Prefix caching unused in Talker; disable to avoid unnecessary overhead.
+    enable_prefix_caching: false
+    # CUDA graph capture uses the pre-allocated inputs_embeds buffer (4096-wide,
+    # main model hidden_size), which is incompatible with Talker's hidden_size=768.
+    # talker_preprocess conditioning would be lost under graph replay.  Eager mode
+    # lets _preprocess return a dynamically-sized 768-wide tensor instead.
+    enforce_eager: true
     engine_args:
       # Talker has no vision/audio encoders; disable MM profiling to avoid embed_multimodal calls.
       limit_mm_per_prompt: {image: 0, video: 0}
@@ -59,6 +67,16 @@ stages:
     final_output_type: audio
     # Code2Wav (CosyVoice2 DiT + HiFi-GAN) BF16 — 20% (9.1GB)
     gpu_memory_utilization: 0.20
+    # Code2Wav has no attention layers (0 KV cache groups). Without this flag,
+    # get_kv_cache_coordinator falls through to HybridKVCacheCoordinator which
+    # asserts len(attention_groups) > 1 — failing for attention-free models.
+    # Setting False routes to KVCacheCoordinatorNoPrefixCache which supports 0 groups.
+    enable_prefix_caching: false
+    # CUDA graph capture (51 batch sizes × full CosyVoice2 diffusion forward)
+    # consumes 20+ GB of GPU memory permanently, leaving insufficient room for
+    # Stage-0 (Thinker, 50%) to initialize. Eager mode keeps Code2Wav memory
+    # footprint to model-weights only (~1-2 GB).
+    enforce_eager: true
     engine_args:
       # Code2Wav has no vision/audio encoders; disable MM profiling.
       limit_mm_per_prompt: {image: 0, video: 0}
