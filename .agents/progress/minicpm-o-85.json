@@ -1,82 +1,63 @@
 {
-  "issue": "#85 MiniCPM-o 4.5 vllm-omni support",
-  "issue_url": "https://github.com/nextain/naia-os/issues/85",
-  "current_phase": "e2e_test",
-  "gates_cleared": ["understand", "scope", "plan", "build", "review"],
-  "current_task": "E2E 서버 로딩 중 — Code2Wav CosyVoice2 수정 후 RunPod A40에서 재기동",
+  "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
+  "issue_url": "https://github.com/nextain/naia-os/issues/72",
+  "current_phase": "post_test_review",
+  "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test"],
+  "current_task": "Post-test review after E2E pass",
   "key_decisions": [
-    "3-stage pipeline: Thinker→Talker→Code2Wav (qwen3_omni 패턴 따름)",
-    "WeightsMapper 키 이름: tts.emb_code.0.→codec_embedding., tts.projector_semantic.→text_projection., tts.projector_spk.→hidden_projection.",
-    "MiniCPMOTalkerLLM vocab_size=32000 (tts.model.embed_tokens weight shape 기준)",
-    "codec_embedding은 별도 nn.Embedding(6562,768) — language_model.embed_tokens와 분리",
-    "tts.head_code.0 spectral_norm: original1=weight matrix, original0=singular value (skip)",
-    "No PR — 외부 PR 금지",
-    "L1: 62/62 PASS (local + RunPod), L2: 7/7 PASS (RunPod RTX3090, actual HF weights)",
-    "Phase 6: thinker forward returns (hidden, text_embeds) tuple",
-    "make_omni_output: thinker_hidden_states + thinker_text_embeds in multimodal_outputs",
-    "pipeline.yaml: 3 stages, thinker2talker + talker2code2wav custom_process_input_func",
-    "vllm v1 래핑: load_model() 이후 self.model = CUDAGraphWrapper. 원본 접근: self.model.unwrap()._orig_mod",
-    "fix(3f390f9): gpu_model_runner.py load_model()에서 unwrap 체인으로 have_multimodal_outputs + make_omni_output_fn 캐시",
-    "fix(acfec76): utils.py StageConfigFactory.create_from_model → pipeline.yaml 기반 stage auto-load",
-    "registry.py: MiniCPMO 엔트리 추가 — vllm built-in MiniCPMO4_5 오버라이드",
-    "minicpm_o.py: @MULTIMODAL_REGISTRY.register_processor 데코레이터 추가",
-    "workspace_start.sh: BF16 전환, import 체크 제거, 올바른 경로는 /workspace/vllm-omni/scripts/",
-    "Code2Wav: CosyVoice3(DiT) 아님, CosyVoice2(conformer) 사용 — stepaudio2 패키지 필요",
-    "Code2Wav 가중치: assets/token2wav/ (flow.pt + hift.pt + flow.yaml) — safetensors 아님",
-    "pip install minicpmo-utils hyperpyyaml 필요 (RunPod에 설치됨)"
+    "Architecture aligned with original openbmb/MiniCPM-o-4_5 modeling_minicpmo.py",
+    "emb_text loaded (was skipped), semantic_projection uses ReLU (was SiLU)",
+    "build_conditioning = emb_text(tokens) + normalize(semantic_projection(hidden))",
+    "_find_tts_bound filters tts_bos/tts_eos boundary in thinker2talker",
+    "EOS token = 6561 (num_audio_tokens - 1), stop_token_ids in pipeline.yaml",
+    "All 8 config defaults aligned with HF config.json",
+    "Audio projection also uses ReLU (same MultiModalProjector as talker)",
+    "projector_spk defined but never called in original inference — loaded but unused",
+    "Boundary tokens: [conditioning, text_eos_embed, audio_bos_embed] (spk_embeds [0,768] no-op)",
+    "tts_token_ids/tts_hidden length alignment: use min(list, tensor) to handle EOS off-by-one"
   ],
-  "session_2026_03_23_fixes": {
-    "bug1_registry": {
-      "symptom": "DBG load: model type=MiniCPMO4_5 (vllm built-in 로드됨)",
-      "fix": "registry.py에 MiniCPMO 엔트리 추가",
-      "commit": "832afd0"
-    },
-    "bug2_processor": {
-      "symptom": "assert hasattr(model_cls, '_processor_factory')",
-      "fix": "@MULTIMODAL_REGISTRY.register_processor 데코레이터 추가",
-      "commit": "832afd0"
-    },
-    "bug3_code2wav_arch": {
-      "symptom": "RuntimeError: Error(s) in loading state_dict for CausalMaskedDiffWithDiT — MiniCPM-o는 CosyVoice2(conformer), 우리는 CosyVoice3(DiT) 사용",
-      "fix": "minicpm_o_code2wav.py 전면 재작성 — stepaudio2.cosyvoice2 + HiFTGenerator 사용",
-      "commit": "3dd1aa3",
-      "key_finding": "flow.pt 키: input_embedding, encoder.(conformer 구조), spk_embed_affine_layer — CosyVoice3과 완전히 다른 아키텍처"
-    },
-    "bug4_path": {
-      "symptom": "FileNotFoundError: flow.pt not found in {model_dir}",
-      "fix": "경로를 assets/token2wav/로 수정 (HF 모델 파일 직접 확인으로 발견)",
-      "commit": "3dd1aa3",
-      "key_finding": "flow.pt는 루트가 아닌 assets/token2wav/ 안에 있음"
-    }
-  },
-  "pending_verification": {
-    "status": "서버 로딩 중 (2026-03-23 16:24 시작, BF16 ~15분 소요)",
-    "server_log": "/workspace/vllm_omni_server.log",
-    "check_for": [
-      "DBG load: model type=MiniCPMOForConditionalGeneration, have_mm=True, make_fn=True",
-      "MiniCPMOCode2Wav: loaded CosyVoice2 flow + HiFi-GAN from assets/token2wav/",
-      "All stages initialized (or port 8091 ready)"
+  "e2e_result": {
+    "status": "PASS",
+    "text": "Hello! How can I help you today?",
+    "audio": "WAV base64 41020 chars (~30KB)",
+    "naia_os_integration": "PASS — Tauri app connected, text+audio displayed",
+    "issues_found": [
+      "<think> tokens exposed in response — Qwen3 reasoning not stripped",
+      "Responses cut short (~10 words) — max_tokens or tts_bound issue",
+      "Single female voice — CosyVoice2 zero speaker embedding, no voice selection"
     ]
   },
+  "commits": [
+    "827524ad fix(#85): align talker conditioning with original MiniCPM-o architecture",
+    "d27d9ae9 fix(#85): align tts_token_ids and tts_hidden lengths in thinker2talker"
+  ],
   "runpod": {
     "pod_id": "mhs8quehmr8eyg",
-    "host": "69.30.85.8:22123",
-    "status": "RUNNING (저잔액 — 종료 임박)",
+    "ssh": "ssh -i ~/.ssh/id_ed25519 -tt mhs8quehmr8eyg-644113b5@ssh.runpod.io",
+    "api_key_location": "/var/home/luke/dev/my-envs/runpod.env",
+    "gpu": "A40 46GB",
+    "ports": "8091/tcp,22/tcp (HTTP proxy does NOT work, use TCP direct)",
+    "server_cmd": "vllm serve $MODEL --omni --port 8091 --host 0.0.0.0 --max-model-len 2048 --skip-mm-profiling",
     "model_dir": "/workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots/44151b35f1b232a280bda5a87ea1a7575d5433fc",
-    "venv": "/workspace/venv",
-    "start_script": "/workspace/vllm-omni/scripts/workspace_start.sh",
-    "installed_extras": ["minicpmo-utils", "hyperpyyaml"]
+    "status": "STOPPED (cost saving)"
   },
-  "debug_logs_to_remove_after_success": [
-    "gpu_ar_model_runner.py: mm_payload loop 내 shape debug",
-    "stage_input_processors/minicpm_o.py: thinker2talker WARNING",
-    "gpu_model_runner.py: load_model 캐시 DBG 로그"
-  ],
+  "review_status": {
+    "upstream_review_passes": "5 passes + headless sub-agent review, all clean",
+    "issues_fixed": "A1-A12 (architecture), R1-R4 (code quality), C1 (test), debug logs (7)",
+    "remaining_known_issues": [
+      "M2: dtype hardcoded bfloat16 in talker_preprocess",
+      "M3: float32→bfloat16 double-cast between stages",
+      "thinker2talker_async_chunk not updated (dead code, async_chunk=false)",
+      "<think> token filtering (naia-os agent side)",
+      "Response truncation investigation needed",
+      "Voice selection not implemented"
+    ]
+  },
   "next_session": [
-    "RunPod 새 pod 시작 시 workspace_setup.sh 실행 후 workspace_start.sh",
-    "pip install minicpmo-utils hyperpyyaml 필요",
-    "DBG load 로그로 model type=MiniCPMOForConditionalGeneration, have_mm=True 확인",
-    "CosyVoice2 flow 로딩 성공 확인 후 E2E curl 테스트",
-    "성공 시 debug 로그 제거 → 클린 커밋"
+    "1. Post-test review (today's tensor length fix)",
+    "2. Fix <think> token stripping in naia-os agent",
+    "3. Investigate response truncation",
+    "4. Sync context files (.agents/ ↔ .users/)",
+    "5. Final commit"
   ]
 }
