@@ -94,16 +94,32 @@ def thinker2talker(
         # Original only passes the speech-relevant portion to the talker.
         tts_start, tts_end = _find_tts_bound(full_token_ids)
 
-        # Slice hidden states and token IDs to TTS-relevant portion
-        tts_token_ids = full_token_ids[tts_start:tts_end]
-        tts_hidden = thinker_hidden_states[tts_start:tts_end]
+        # Slice hidden states and token IDs to TTS-relevant portion.
+        # Use hidden_states.shape[0] as authoritative length — token_ids
+        # may differ by 1 due to EOS inclusion/exclusion in output.token_ids.
+        hidden_len = thinker_hidden_states.shape[0]
+        token_len = len(full_token_ids)
 
-        num_tts_tokens = len(tts_token_ids)
+        # Clamp tts_start/tts_end to hidden_states bounds
+        if tts_start >= hidden_len:
+            tts_start = 0
+            tts_end = None
+        if tts_end is not None and tts_end > hidden_len:
+            tts_end = hidden_len
+
+        tts_hidden = thinker_hidden_states[tts_start:tts_end]
+        tts_token_ids = full_token_ids[tts_start:tts_end]
+
+        # Align lengths: trim the longer one to match the shorter
+        num_tts_tokens = min(len(tts_token_ids), tts_hidden.shape[0])
+        tts_token_ids = tts_token_ids[:num_tts_tokens]
+        tts_hidden = tts_hidden[:num_tts_tokens]
+
         if num_tts_tokens == 0:
             # Fallback: no TTS markers found, use all tokens
-            tts_token_ids = full_token_ids
-            tts_hidden = thinker_hidden_states
-            num_tts_tokens = len(tts_token_ids)
+            num_tts_tokens = min(token_len, hidden_len)
+            tts_token_ids = full_token_ids[:num_tts_tokens]
+            tts_hidden = thinker_hidden_states[:num_tts_tokens]
 
         info: dict[str, Any] = {
             "thinker_token_ids": torch.tensor(
