@@ -98,6 +98,15 @@ class TestFindTtsBound:
         assert start == 3
         assert end == 5
 
+    def test_eos_before_bos(self, find_bound):
+        """EOS appears before BOS → content slice is empty."""
+        tokens = [self.EOS, 10, self.BOS, 20]
+        start, end = find_bound(tokens, self.BOS, self.EOS)
+        # BOS at index 2 → start = 3, EOS at index 0 → end = 0
+        # tokens[3:0] is empty
+        assert start == 3
+        assert end == 0
+
 
 # ---------------------------------------------------------------------------
 # thinker2talker
@@ -118,9 +127,6 @@ class TestThinker2Talker:
             prompt_len: Number of tokens to treat as prompt (rest are generated).
         """
         from unittest.mock import MagicMock
-        from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import (
-            MiniCPMOConfig,
-        )
 
         # Mock thinker output
         output = MagicMock()
@@ -166,6 +172,7 @@ class TestThinker2Talker:
         # TTS content: tokens [10, 20, 30] (indices 6-8, after BOS at 5)
         assert info["thinker_token_ids"].shape[0] == 3
         assert info["thinker_hidden_states"].shape[0] == 3
+        assert info["thinker_token_ids"].tolist() == [10, 20, 30]
         # +2 for text_eos and audio_bos boundary tokens
         assert len(prompt.prompt_token_ids) == 3 + 2
 
@@ -203,6 +210,8 @@ class TestThinker2Talker:
 
         info = result[0].additional_information
         assert info["thinker_token_ids"].shape[0] == 10
+        # +2 for boundary tokens
+        assert len(result[0].prompt_token_ids) == 10 + 2
 
     def test_hidden_shorter_than_tokens_clamps(self):
         """When hidden_states has fewer entries than tokens, clamp to hidden len."""
@@ -254,7 +263,6 @@ class TestTalkerPreprocess:
         from unittest.mock import MagicMock
         from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import (
             MiniCPMOConfig,
-            MiniCPMTTSConfig,
         )
 
         config = MiniCPMOConfig()
@@ -296,9 +304,11 @@ class TestTalkerPreprocess:
 
         return model, hidden_size, llm_dim
 
-    def test_prefill_builds_conditioning(self, preprocess_env):
-        """Prefill (span_len > 1) builds conditioning from thinker outputs."""
+    def test_prefill_exact_fit(self, preprocess_env):
+        """Prefill with span_len == conditioning length: builds embeds, no trailing."""
         model, hidden_size, llm_dim = preprocess_env
+        # 3 thinker tokens + 2 boundary = 5 conditioning positions
+        # Request exactly 5 → all consumed, no trailing
         seq_len = 5
 
         input_ids = torch.zeros(seq_len, dtype=torch.long)
@@ -312,27 +322,7 @@ class TestTalkerPreprocess:
         )
 
         assert embeds is not None
-        assert embeds.shape[0] == seq_len
-        assert embeds.shape[1] == hidden_size
-
-    def test_prefill_no_trailing_when_exact_fit(self, preprocess_env):
-        """When span_len == conditioning length, no trailing is stored."""
-        model, hidden_size, llm_dim = preprocess_env
-        # 3 thinker tokens + 2 boundary = 5 conditioning positions
-        # Request exactly 5 → no trailing
-        seq_len = 5
-
-        input_ids = torch.zeros(seq_len, dtype=torch.long)
-        info_dict = {
-            "thinker_token_ids": torch.zeros(3, dtype=torch.long),
-            "thinker_hidden_states": torch.randn(3, llm_dim),
-        }
-
-        _, embeds, update = model.talker_preprocess(
-            input_ids, None, **info_dict
-        )
-
-        assert embeds.shape[0] == seq_len
+        assert embeds.shape == (seq_len, hidden_size)
         assert "trailing_conditioning" not in update
 
     def test_prefill_stores_trailing(self, preprocess_env):
