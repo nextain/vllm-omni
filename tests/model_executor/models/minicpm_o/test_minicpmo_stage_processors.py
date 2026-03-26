@@ -108,8 +108,15 @@ class TestThinker2Talker:
     """Tests for the thinker→talker stage input processor."""
 
     def _make_stage_list(self, token_ids, hidden_states,
-                         tts_bos_id=151703, tts_eos_id=151704):
-        """Create a mock stage_list with thinker outputs."""
+                         tts_bos_id=151703, tts_eos_id=151704,
+                         prompt_len=5):
+        """Create a mock stage_list with thinker outputs.
+
+        Args:
+            token_ids: Full token sequence (prompt + generated).
+            hidden_states: Hidden states tensor [total_tokens, hidden_dim].
+            prompt_len: Number of tokens to treat as prompt (rest are generated).
+        """
         from unittest.mock import MagicMock
         from vllm_omni.model_executor.models.minicpm_o.configuration_minicpmo import (
             MiniCPMOConfig,
@@ -117,11 +124,11 @@ class TestThinker2Talker:
 
         # Mock thinker output
         output = MagicMock()
-        output.token_ids = token_ids[5:]  # simulate: first 5 are prompt
+        output.token_ids = token_ids[prompt_len:]
         output.multimodal_output = {"thinker_hidden_states": hidden_states}
 
         thinker_output = MagicMock()
-        thinker_output.prompt_token_ids = token_ids[:5]
+        thinker_output.prompt_token_ids = token_ids[:prompt_len]
         thinker_output.outputs = [output]
 
         # Mock stage with config
@@ -196,6 +203,25 @@ class TestThinker2Talker:
 
         info = result[0].additional_information
         assert info["thinker_token_ids"].shape[0] == 10
+
+    def test_hidden_shorter_than_tokens_clamps(self):
+        """When hidden_states has fewer entries than tokens, clamp to hidden len."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            thinker2talker,
+        )
+
+        BOS, EOS = 151703, 151704
+        token_ids = [1, 2, 3, 4, 5, BOS, 10, 20, 30, EOS]
+        # Only 7 hidden states for 10 tokens (simulates length mismatch)
+        hidden = torch.randn(7, 4096)
+
+        stage_list = self._make_stage_list(token_ids, hidden)
+        result = thinker2talker(stage_list, [0])
+
+        info = result[0].additional_information
+        # Should not crash; lengths should be clamped to min of hidden/token
+        assert info["thinker_token_ids"].shape[0] == info["thinker_hidden_states"].shape[0]
+        assert info["thinker_token_ids"].shape[0] <= 7
 
     def test_hidden_state_dtype_preserved(self):
         """Hidden states should preserve native dtype (no fp32 conversion)."""
@@ -289,6 +315,26 @@ class TestTalkerPreprocess:
         assert embeds.shape[0] == seq_len
         assert embeds.shape[1] == hidden_size
 
+    def test_prefill_no_trailing_when_exact_fit(self, preprocess_env):
+        """When span_len == conditioning length, no trailing is stored."""
+        model, hidden_size, llm_dim = preprocess_env
+        # 3 thinker tokens + 2 boundary = 5 conditioning positions
+        # Request exactly 5 → no trailing
+        seq_len = 5
+
+        input_ids = torch.zeros(seq_len, dtype=torch.long)
+        info_dict = {
+            "thinker_token_ids": torch.zeros(3, dtype=torch.long),
+            "thinker_hidden_states": torch.randn(3, llm_dim),
+        }
+
+        _, embeds, update = model.talker_preprocess(
+            input_ids, None, **info_dict
+        )
+
+        assert embeds.shape[0] == seq_len
+        assert "trailing_conditioning" not in update
+
     def test_prefill_stores_trailing(self, preprocess_env):
         """When conditioning is longer than span, trailing is stored."""
         model, hidden_size, llm_dim = preprocess_env
@@ -310,6 +356,30 @@ class TestTalkerPreprocess:
         assert "trailing_conditioning" in update
         assert update["trailing_conditioning"].shape[0] == 2  # remaining
         assert update["num_processed_tokens"] == span_len
+
+    def test_prefill_second_chunk_continues(self, preprocess_env):
+        """Chunked prefill: 2nd chunk starts from num_processed_tokens."""
+        model, hidden_size, llm_dim = preprocess_env
+        # 3 thinker tokens + 2 boundary = 5 conditioning positions
+        # 1st chunk consumed 2, 2nd chunk requests 2 more → 1 trailing
+        span_len = 2
+
+        input_ids = torch.zeros(span_len, dtype=torch.long)
+        info_dict = {
+            "thinker_token_ids": torch.zeros(3, dtype=torch.long),
+            "thinker_hidden_states": torch.randn(3, llm_dim),
+            "num_processed_tokens": 2,  # 1st chunk already consumed 2
+        }
+
+        _, embeds, update = model.talker_preprocess(
+            input_ids, None, **info_dict
+        )
+
+        assert embeds.shape[0] == span_len
+        assert update["num_processed_tokens"] == 4  # 2 + 2
+        # 5 total - 4 consumed = 1 trailing
+        assert "trailing_conditioning" in update
+        assert update["trailing_conditioning"].shape[0] == 1
 
     def test_decode_consumes_trailing(self, preprocess_env):
         """Decode (span_len=1) consumes trailing conditioning."""
