@@ -70,6 +70,8 @@ class MiniCPMTTSConfig(PretrainedConfig):
         num_vq: int = 1,
         audio_bos_token_id: int = 151687,
         text_eos_token_id: int = 151692,
+        tts_bos_token_id: int = 151703,
+        tts_eos_token_id: int = 151704,
         audio_tokenizer_type: str = "s3tokenizer",
         audio_tokenizer_sample_rate: int = 16000,
         # Conditioning
@@ -125,6 +127,8 @@ class MiniCPMTTSConfig(PretrainedConfig):
         self.num_vq = num_vq
         self.audio_bos_token_id = audio_bos_token_id
         self.text_eos_token_id = text_eos_token_id
+        self.tts_bos_token_id = tts_bos_token_id
+        self.tts_eos_token_id = tts_eos_token_id
         self.audio_tokenizer_type = audio_tokenizer_type
         self.audio_tokenizer_sample_rate = audio_tokenizer_sample_rate
 

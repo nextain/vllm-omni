@@ -52,12 +52,6 @@ from vllm_omni.model_executor.models.output_templates import OmniOutput
 
 logger = init_logger(__name__)
 
-# MiniCPM-o 4.5 special token IDs (from openbmb/MiniCPM-o-4_5 tokenizer_config.json)
-TTS_BOS_TOKEN_ID: int = 151703   # <|tts_bos|>
-TTS_EOS_TOKEN_ID: int = 151704   # <|tts_eos|>
-AUDIO_BOS_TOKEN_ID: int = 151687  # tts_config.audio_bos_token_id (codec AR start)
-TEXT_EOS_TOKEN_ID: int = 151692   # tts_config.text_eos_token_id
-
 
 @MULTIMODAL_REGISTRY.register_processor(
     MiniCPMVMultiModalProcessor,
@@ -280,17 +274,11 @@ class MiniCPMOForConditionalGeneration(
 
         # ---- Code2Wav ----
         elif self.model_stage == "code2wav":
-            seq_token_counts: list[int] | None = kwargs.get("seq_token_counts")  # type: ignore[assignment]
             codes = input_ids
             if codes.ndim == 1:
                 codes = codes.unsqueeze(0)
 
-            return self.code2wav.chunked_decode(
-                codes=codes,
-                chunk_size=300,
-                left_context_size=25,
-                seq_token_counts=seq_token_counts,
-            )
+            return self.code2wav.decode(codes)
 
         # Unreachable (ValueError raised in __init__)
         raise AssertionError(f"Unexpected model_stage: {self.model_stage!r}")
@@ -309,7 +297,6 @@ class MiniCPMOForConditionalGeneration(
         if self.model_stage == "thinker":
             # Thinker forward returns (hidden_states, inputs_embeds) tuple.
             # thinker_hidden_states is used by talker for semantic_projection.
-            # thinker_text_embeds is kept for async_chunk streaming compatibility.
             hidden, text_embeds = model_outputs
 
             # Pipeline-parallel non-final rank: language_model returns
@@ -399,14 +386,15 @@ class MiniCPMOForConditionalGeneration(
 
             if thinker_hidden_states is not None and thinker_token_ids is not None:
                 t_ids = thinker_token_ids.to(device=device, dtype=torch.long)
-                t_hid = thinker_hidden_states.to(device=device, dtype=torch.bfloat16)
+                t_hid = thinker_hidden_states.to(device=device)
 
                 # Build conditioning: emb_text(tokens) + normalize(semantic_projection(hidden))
                 full_conditioning = self.talker.build_conditioning(t_ids, t_hid)
 
                 # Append boundary tokens: [tts_embeds, text_eos, audio_bos]
+                tts_config = self.config.tts_config
                 boundary_ids = torch.tensor(
-                    [TEXT_EOS_TOKEN_ID, AUDIO_BOS_TOKEN_ID],
+                    [tts_config.text_eos_token_id, tts_config.audio_bos_token_id],
                     device=device, dtype=torch.long,
                 )
                 boundary_embeds = self.talker.emb_text(boundary_ids)

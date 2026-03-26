@@ -72,6 +72,7 @@ class MiniCPMOCode2Wav(nn.Module):
         # them out of state_dict() / named_parameters().
         self.__dict__["_flow"] = None
         self.__dict__["_hift"] = None
+        self.__dict__["_spk_embed_dim"] = None
 
     def _get_token2wav_dir(self, model_dir: str) -> str:
         return os.path.join(model_dir, "assets", "token2wav")
@@ -109,6 +110,16 @@ class MiniCPMOCode2Wav(nn.Module):
         )
         flow.to(device).eval()
         self.__dict__["_flow"] = flow
+
+        # Extract speaker embedding dimension from flow model
+        if hasattr(flow, "spk_embed_affine_layer"):
+            self.__dict__["_spk_embed_dim"] = flow.spk_embed_affine_layer.in_features
+        else:
+            self.__dict__["_spk_embed_dim"] = 192
+            logger.warning(
+                "MiniCPMOCode2Wav: could not determine spk_embed_dim from "
+                "flow model, falling back to 192."
+            )
 
         # Load HiFi-GAN vocoder (strips 'generator.' prefix from checkpoint keys)
         hift = HiFTGenerator()
@@ -158,6 +169,7 @@ class MiniCPMOCode2Wav(nn.Module):
 
         device = codes.device
         dtype = next(flow.parameters()).dtype
+        spk_dim = self.__dict__["_spk_embed_dim"]
 
         # CosyVoice2 flow.inference() requires batch_size == 1
         results: list[torch.Tensor] = []
@@ -165,14 +177,16 @@ class MiniCPMOCode2Wav(nn.Module):
             token = codes[i : i + 1].to(dtype=torch.int32)
             token_len = torch.tensor([token.shape[1]], dtype=torch.int32, device=device)
 
-            # Empty reference prompt — no voice cloning, uses default voice
+            # Empty reference prompt — no voice cloning, uses default voice.
+            # 80 = CosyVoice2 mel bins (from flow.yaml); irrelevant here since
+            # prompt length is 0 (no reference audio).
             prompt_token = torch.zeros(1, 0, dtype=torch.int32, device=device)
             prompt_token_len = torch.tensor([0], dtype=torch.int32, device=device)
             prompt_feat = torch.zeros(1, 0, 80, dtype=dtype, device=device)
             prompt_feat_len = torch.tensor([0], dtype=torch.int32, device=device)
 
-            # Zero speaker embedding (spk_embed_dim = 192 for CosyVoice2)
-            embedding = torch.zeros(1, 192, dtype=dtype, device=device)
+            # Zero speaker embedding — no voice cloning, uses default voice
+            embedding = torch.zeros(1, spk_dim, dtype=dtype, device=device)
 
             with torch.inference_mode():
                 mel = flow.inference(
@@ -192,20 +206,11 @@ class MiniCPMOCode2Wav(nn.Module):
 
         return torch.cat(results, dim=0)
 
-    def chunked_decode(
-        self,
-        codes: torch.Tensor,
-        chunk_size: int = 300,
-        left_context_size: int = 25,
-        seq_token_counts: list[int] | None = None,
-    ) -> list[torch.Tensor]:
+    def decode(self, codes: torch.Tensor) -> list[torch.Tensor]:
         """Decode codec token sequences to waveforms.
 
         Args:
-            codes:            [batch, seq_len] — audio token IDs
-            chunk_size:       Not used (full decode for simplicity)
-            left_context_size: Not used
-            seq_token_counts: Per-request token count for variable-length batch
+            codes: [batch, seq_len] — audio token IDs from Talker
 
         Returns:
             list[torch.Tensor]: One waveform [1, audio_len] per batch element

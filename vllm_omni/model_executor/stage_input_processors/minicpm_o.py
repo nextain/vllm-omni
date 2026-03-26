@@ -9,7 +9,6 @@ import torch
 from vllm.inputs import TextPrompt
 from vllm.platforms import current_platform
 
-from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.inputs.data import OmniTokensPrompt
 
 
@@ -32,8 +31,8 @@ def _validate_stage_inputs(stage_list, engine_input_source):
 
 def _find_tts_bound(
     token_ids: list[int],
-    tts_bos_id: int = 151703,
-    tts_eos_id: int = 151704,
+    tts_bos_id: int,
+    tts_eos_id: int,
 ) -> tuple[int, int | None]:
     """Find the TTS content boundary in the thinker token sequence.
 
@@ -76,6 +75,12 @@ def thinker2talker(
 
     device = torch.device(current_platform.device_type)
 
+    # Read TTS boundary token IDs from model config (MiniCPMTTSConfig)
+    thinker_stage = stage_list[engine_input_source[0]]
+    tts_config = thinker_stage.vllm_config.model_config.hf_config.tts_config
+    tts_bos_id = tts_config.tts_bos_token_id
+    tts_eos_id = tts_config.tts_eos_token_id
+
     for thinker_output in thinker_outputs:
         output = thinker_output.outputs[0]
 
@@ -92,7 +97,7 @@ def thinker2talker(
 
         # Find TTS content boundary: [tts_bos+1 : tts_eos]
         # Original only passes the speech-relevant portion to the talker.
-        tts_start, tts_end = _find_tts_bound(full_token_ids)
+        tts_start, tts_end = _find_tts_bound(full_token_ids, tts_bos_id, tts_eos_id)
 
         # Slice hidden states and token IDs to TTS-relevant portion.
         # Use hidden_states.shape[0] as authoritative length — token_ids
@@ -125,9 +130,7 @@ def thinker2talker(
             "thinker_token_ids": torch.tensor(
                 tts_token_ids, dtype=torch.long, device=device,
             ),
-            "thinker_hidden_states": (
-                tts_hidden.detach().to(device=device, dtype=torch.float)
-            ),
+            "thinker_hidden_states": tts_hidden.detach().to(device=device),
         }
 
         # +2 for text_eos and audio_bos boundary tokens appended in talker_preprocess
@@ -145,62 +148,6 @@ def thinker2talker(
         )
 
     return talker_inputs
-
-
-def thinker2talker_async_chunk(
-    transfer_manager: Any,
-    pooling_output: dict[str, Any],
-    request: "OmniEngineCoreRequest",
-    is_finished: bool = False,
-) -> dict[str, Any] | None:
-    """Streaming (async-chunk) variant of thinker2talker.
-
-    Called once per thinker decode step to pass freshly generated token
-    embeddings to the talker stage without waiting for the full thinker run.
-
-    NOTE: This function is not registered in pipeline.yaml (async_chunk=false)
-    and needs to be updated to use thinker_token_ids + build_conditioning()
-    when async_chunk mode is enabled.  Currently kept for future use.
-    """
-    request_id = request.external_req_id
-    chunk_id = transfer_manager.put_req_chunk.get(request_id, 0)
-
-    thinker_text_embeds = pooling_output.get("thinker_text_embeds")
-    thinker_hidden_states = pooling_output.get("thinker_hidden_states")
-
-    if thinker_text_embeds is None and thinker_hidden_states is None:
-        return None
-
-    if chunk_id == 0:
-        all_token_ids = list(getattr(request, "all_token_ids", []))
-        prompt_token_ids = list(getattr(request, "prompt_token_ids", []))
-        talker_info: dict[str, Any] = {
-            "finished": torch.tensor(is_finished, dtype=torch.bool),
-        }
-        if thinker_text_embeds is not None:
-            talker_info["thinker_text_embeds"] = thinker_text_embeds.detach().cpu()
-        if thinker_hidden_states is not None:
-            talker_info["thinker_hidden_states"] = thinker_hidden_states.detach().cpu()
-        talker_info["thinker_sequences"] = all_token_ids
-        talker_info["thinker_input_ids"] = prompt_token_ids
-    else:
-        talker_info = {
-            "finished": torch.tensor(is_finished, dtype=torch.bool),
-        }
-        output_token_ids = list(getattr(request, "output_token_ids", []))
-        if output_token_ids:
-            talker_info["override_keys"] = [
-                "thinker_decode_text_embeds",
-                "thinker_decode_hidden_states",
-                "thinker_output_token_ids",
-            ]
-            if thinker_text_embeds is not None:
-                talker_info["thinker_decode_text_embeds"] = thinker_text_embeds.detach().cpu()
-            if thinker_hidden_states is not None:
-                talker_info["thinker_decode_hidden_states"] = thinker_hidden_states.detach().cpu()
-            talker_info["thinker_output_token_ids"] = output_token_ids
-
-    return talker_info
 
 
 # =========================

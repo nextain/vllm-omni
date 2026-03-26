@@ -551,7 +551,7 @@ class MiniCPMOThinkerForConditionalGeneration(
 
         Returns a 2-tuple so that ``make_omni_output`` can emit both
         ``thinker_hidden_states`` (for talker semantic_projection) and
-        ``thinker_text_embeds`` (for async_chunk streaming compatibility).
+        ``thinker_text_embeds`` (for per-request slicing in gpu_ar_model_runner).
         """
         if inputs_embeds is None:
             inputs_embeds = self.embed_input_ids(input_ids)
