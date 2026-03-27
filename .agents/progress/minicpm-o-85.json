@@ -1,40 +1,46 @@
 {
   "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
-  "current_phase": "e2e_test",
-  "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test", "post_test_review"],
-  "current_task": "RunPod E2E 재테스트 — 크레딧 소진, 충전 후 재시도",
+  "current_phase": "build",
+  "current_task": "stage_configs/minicpmo.yaml로 재작성 (pipeline.yaml 방식 폐기)",
+  "gates_cleared": ["understand", "scope", "investigate", "plan"],
+  "status": "E2E 재현 실패 — 근본 재설계 필요",
+  "critical_problem": {
+    "summary": "pipeline.yaml + StageConfigFactory 방식이 upstream v0.18.0 rebase와 호환 안 됨",
+    "detail": "다른 모든 모델은 stage_configs/*.yaml 사용. MiniCPM-o만 pipeline.yaml 사용 → 연쇄 에러",
+    "midterm_review": ".agents/docs/minicpm-o-midterm-review.md"
+  },
   "key_decisions": [
+    "pipeline.yaml 방식 폐기 → stage_configs/minicpmo.yaml로 전환 (qwen3_omni 패턴)",
     "Architecture aligned with original openbmb/MiniCPM-o-4_5",
     "talker2code2wav strips trailing EOS (upstream pattern)",
-    "talker_preprocess decode: conditioning-only (no codec_embeds addition)",
-    "minicpmo-utils, s3tokenizer, hyperpyyaml added to requirements"
+    "talker_preprocess decode: conditioning-only (no codec_embeds addition)"
   ],
-  "e2e_result": {
-    "status": "PASS (pre-review-fix, old pod)",
-    "note": "Review fixes + dependency fixes applied — re-test needed"
-  },
-  "runpod": {
-    "status": "CREDIT_EXHAUSTED ($0.13 remaining)",
-    "pods": {
-      "mg5ieaut9cuu1b": "A6000, EXITED, venv installed but never tested",
-      "nz7xrdfaeusdtb": "A40, EXITED, venv+model+deps installed, 3x process conflict killed server"
-    },
-    "issues_found_this_session": [
-      "Network volume (NFS) extremely slow for model loading vs local NVMe",
-      "Multiple vllm processes competing for GPU — must kill old before restart",
-      "minicpmo-utils not in requirements — Code2Wav load_from_directory fails",
-      "--skip-mm-profiling needed — _embed_pixel_values crashes on list input",
-      "workspace_setup.sh missing minicpmo-utils install step"
-    ],
-    "lesson": "Next time: Volume disk (local), not Network volume. Kill all GPU processes before restart."
-  },
   "next_session": [
-    "1. RunPod 크레딧 충전",
-    "2. Volume disk (로컬) pod 생성 — Network volume 사용 금지",
-    "3. bash scripts/workspace_setup.sh → bash scripts/workspace_start.sh (--skip-mm-profiling 추가 필요)",
-    "4. E2E curl 테스트",
-    "5. workspace_start.sh에 --skip-mm-profiling 반영",
-    "6. 보고서 업데이트 + context sync + PR"
-  ]
+    "1. 반드시 먼저 읽을 것: .agents/docs/minicpm-o-midterm-review.md",
+    "2. stage_configs/minicpmo.yaml 생성 (qwen3_omni_moe.yaml 참조)",
+    "3. pipeline.yaml 의존 코드 정리",
+    "4. api_server.py try/except 땜질 제거",
+    "5. fresh install 검증 (git clone → pip install → 서버 시작 → curl)",
+    "6. RunPod E2E (Volume disk 로컬, --trust-remote-code는 YAML에 명시)",
+    "7. 문서 전면 재작성 (보고서, PR draft)"
+  ],
+  "do_not_repeat": [
+    "pipeline.yaml + StageConfigFactory 사용 금지 — stage_configs/*.yaml만 사용",
+    "검증 안 된 '새 방식' 채택 금지 — 다른 모델이 쓰는 패턴 따를 것",
+    "수동 pip install 후 requirements 반영 안 하면 안 됨",
+    "코드 리뷰만으로 완료 선언 금지 — fresh install E2E 필수",
+    "서버 시작 필수 플래그 문서화 안 하면 안 됨"
+  ],
+  "runpod": {
+    "pod_nz7xrdfaeusdtb": "A40, STOPPED, 모델 /workspace/.cache_hf/에 복사 완료",
+    "pod_mg5ieaut9cuu1b": "A6000, EXITED, 삭제 가능",
+    "balance": "$8.60"
+  },
+  "reference_files": {
+    "midterm_review": ".agents/docs/minicpm-o-midterm-review.md",
+    "qwen3_pattern": "vllm_omni/model_executor/stage_configs/qwen3_omni_moe.yaml",
+    "pr_draft": ".agents/docs/pr-draft-minicpm-o.md",
+    "implementation_report": "docs/minicpm-o-implementation-report.md"
+  }
 }
