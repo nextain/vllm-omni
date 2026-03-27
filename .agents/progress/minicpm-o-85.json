@@ -1,46 +1,41 @@
 {
   "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
-  "current_phase": "build",
-  "current_task": "stage_configs/minicpmo.yaml로 재작성 (pipeline.yaml 방식 폐기)",
-  "gates_cleared": ["understand", "scope", "investigate", "plan"],
-  "status": "E2E 재현 실패 — 근본 재설계 필요",
-  "critical_problem": {
-    "summary": "pipeline.yaml + StageConfigFactory 방식이 upstream v0.18.0 rebase와 호환 안 됨",
-    "detail": "다른 모든 모델은 stage_configs/*.yaml 사용. MiniCPM-o만 pipeline.yaml 사용 → 연쇄 에러",
-    "midterm_review": ".agents/docs/minicpm-o-midterm-review.md"
-  },
+  "current_phase": "e2e_test",
+  "current_task": "RunPod E2E — stage_configs/minicpmo.yaml 방식으로 서버 시작 검증",
+  "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review"],
+  "status": "stage_configs 전환 + 7-pass 리뷰 완료, RunPod E2E 대기",
   "key_decisions": [
-    "pipeline.yaml 방식 폐기 → stage_configs/minicpmo.yaml로 전환 (qwen3_omni 패턴)",
-    "Architecture aligned with original openbmb/MiniCPM-o-4_5",
-    "talker2code2wav strips trailing EOS (upstream pattern)",
-    "talker_preprocess decode: conditioning-only (no codec_embeds addition)"
+    "pipeline.yaml → stage_configs/minicpmo.yaml 전환 (qwen3_omni 패턴)",
+    "workspace_setup.sh → requirements/common.txt 직접 참조",
+    "MODEL_PATH → find 자동 탐색 (해시 하드코딩 제거)",
+    "api_server.py try/except — RunPod 테스트 후 제거 여부 결정"
+  ],
+  "review_status": {
+    "type": "code",
+    "lenses": ["정확성", "완전성", "일관성", "패턴 준수", "운영 완성도"],
+    "total_passes": 7,
+    "auto_fixes": 2,
+    "result": "2_consecutive_clean (Pass 6 + Pass 7)"
+  },
+  "escalations": [
+    "PP 지원 (lambda: None) — single GPU 타겟이므로 보류",
+    "repetition_penalty 미설정 — 원본 모델 확인 필요"
   ],
   "next_session": [
-    "1. 반드시 먼저 읽을 것: .agents/docs/minicpm-o-midterm-review.md",
-    "2. stage_configs/minicpmo.yaml 생성 (qwen3_omni_moe.yaml 참조)",
-    "3. pipeline.yaml 의존 코드 정리",
-    "4. api_server.py try/except 땜질 제거",
-    "5. fresh install 검증 (git clone → pip install → 서버 시작 → curl)",
-    "6. RunPod E2E (Volume disk 로컬, --trust-remote-code는 YAML에 명시)",
-    "7. 문서 전면 재작성 (보고서, PR draft)"
+    "1. RunPod pod 시작 (Volume disk 로컬 권장)",
+    "2. git clone → bash scripts/workspace_setup.sh → bash scripts/workspace_start.sh",
+    "3. curl E2E 테스트",
+    "4. 성공하면: 문서 업데이트 + PR draft 재작성",
+    "5. 실패하면: 에러 로그 기반 디버깅 (stage_configs 방식이므로 StageConfigFactory 우회됨)"
   ],
-  "do_not_repeat": [
-    "pipeline.yaml + StageConfigFactory 사용 금지 — stage_configs/*.yaml만 사용",
-    "검증 안 된 '새 방식' 채택 금지 — 다른 모델이 쓰는 패턴 따를 것",
-    "수동 pip install 후 requirements 반영 안 하면 안 됨",
-    "코드 리뷰만으로 완료 선언 금지 — fresh install E2E 필수",
-    "서버 시작 필수 플래그 문서화 안 하면 안 됨"
-  ],
-  "runpod": {
-    "pod_nz7xrdfaeusdtb": "A40, STOPPED, 모델 /workspace/.cache_hf/에 복사 완료",
-    "pod_mg5ieaut9cuu1b": "A6000, EXITED, 삭제 가능",
-    "balance": "$8.60"
-  },
   "reference_files": {
     "midterm_review": ".agents/docs/minicpm-o-midterm-review.md",
-    "qwen3_pattern": "vllm_omni/model_executor/stage_configs/qwen3_omni_moe.yaml",
-    "pr_draft": ".agents/docs/pr-draft-minicpm-o.md",
-    "implementation_report": "docs/minicpm-o-implementation-report.md"
+    "stage_config": "vllm_omni/model_executor/stage_configs/minicpmo.yaml",
+    "qwen3_reference": "vllm_omni/model_executor/stage_configs/qwen3_omni_moe.yaml"
+  },
+  "runpod": {
+    "pod_nz7xrdfaeusdtb": "A40, STOPPED, 모델 /workspace/.cache_hf/에 있음",
+    "balance": "~$8"
   }
 }
