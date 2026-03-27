@@ -159,6 +159,10 @@ class MiniCPMOCode2Wav(nn.Module):
         if torch.cuda.is_available() and torch.cuda.is_current_stream_capturing():
             return codes.new_zeros(codes.shape[0], 1, 1, dtype=torch.float32)
 
+        # Guard against empty codec sequences (e.g. talker produced only EOS)
+        if codes.numel() == 0 or codes.shape[-1] == 0:
+            return codes.new_zeros(codes.shape[0], 1, 1, dtype=torch.float32)
+
         flow = self.__dict__["_flow"]
         hift = self.__dict__["_hift"]
 

@@ -372,7 +372,7 @@ class TestTalkerPreprocess:
         assert update["trailing_conditioning"].shape[0] == 1
 
     def test_decode_consumes_trailing(self, preprocess_env):
-        """Decode (span_len=1) consumes trailing conditioning."""
+        """Decode (span_len=1) consumes trailing conditioning alone (no codec add)."""
         model, hidden_size, _ = preprocess_env
 
         trailing = torch.randn(2, hidden_size)
@@ -385,6 +385,8 @@ class TestTalkerPreprocess:
 
         assert embeds is not None
         assert embeds.shape == (1, hidden_size)
+        # Conditioning used alone — should match first trailing position exactly
+        assert torch.allclose(embeds[0], trailing[0])
         # One trailing consumed, one remaining
         assert "trailing_conditioning" in update
         assert update["trailing_conditioning"].shape[0] == 1
@@ -474,3 +476,76 @@ class TestTTSConfigTokenIds:
         cfg = MiniCPMOConfig()
         assert cfg.tts_config.tts_bos_token_id == 151703
         assert cfg.tts_config.tts_eos_token_id == 151704
+
+
+# ---------------------------------------------------------------------------
+# talker2code2wav
+# ---------------------------------------------------------------------------
+
+
+class TestTalker2Code2Wav:
+    """Tests for the talker→code2wav stage input processor."""
+
+    def _make_talker_stage(self, token_ids):
+        """Create a mock stage_list with talker outputs."""
+        from unittest.mock import MagicMock
+
+        output = MagicMock()
+        output.token_ids = token_ids
+
+        talker_output = MagicMock()
+        talker_output.outputs = [output]
+
+        stage = MagicMock()
+        stage.engine_outputs = [talker_output]
+
+        return [stage]
+
+    def test_strips_trailing_eos(self):
+        """Stop token (EOS) at end is stripped before passing to Code2Wav."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav,
+        )
+
+        # Simulates vllm including stop_token_id 6561 in output
+        token_ids = [100, 200, 300, 6561]
+        stage_list = self._make_talker_stage(token_ids)
+        result = talker2code2wav(stage_list, [0])
+
+        assert len(result) == 1
+        # Last token (6561) should be stripped
+        assert result[0].prompt_token_ids == [100, 200, 300]
+
+    def test_strips_any_trailing_token(self):
+        """Any trailing token is stripped (not just 6561), matching upstream pattern."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav,
+        )
+
+        token_ids = [10, 20, 30, 40, 50]
+        stage_list = self._make_talker_stage(token_ids)
+        result = talker2code2wav(stage_list, [0])
+
+        assert result[0].prompt_token_ids == [10, 20, 30, 40]
+
+    def test_empty_token_ids(self):
+        """Empty token_ids produces empty codec_codes."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav,
+        )
+
+        stage_list = self._make_talker_stage([])
+        result = talker2code2wav(stage_list, [0])
+
+        assert result[0].prompt_token_ids == []
+
+    def test_single_token_produces_empty(self):
+        """Single token (just EOS) → empty codec after strip."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav,
+        )
+
+        stage_list = self._make_talker_stage([6561])
+        result = talker2code2wav(stage_list, [0])
+
+        assert result[0].prompt_token_ids == []

@@ -2,8 +2,8 @@
   "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
   "current_phase": "post_test_review",
-  "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test"],
-  "current_task": "Post-test review after E2E pass",
+  "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test", "post_test_review"],
+  "current_task": "L2/L3/L4 테스트 재작성 + 남은 이슈 처리",
   "key_decisions": [
     "Architecture aligned with original openbmb/MiniCPM-o-4_5 modeling_minicpmo.py",
     "emb_text loaded (was skipped), semantic_projection uses ReLU (was SiLU)",
@@ -53,11 +53,14 @@
       "Voice selection not implemented"
     ]
   },
+  "completed_items": [
+    "Post-test review — tensor length fix (d27d9ae9), 5 passes + headless review all clean"
+  ],
   "next_session": [
-    "1. Post-test review (today's tensor length fix)",
-    "2. Fix <think> token stripping in naia-os agent",
-    "3. Investigate response truncation",
+    "1. L2/L3/L4 테스트 재작성 (openbmb API 확인 → end2end.py → 테스트 수정 → 벤치마크 수정)",
+    "2. Fix <think> token stripping (naia-os agent side, #157)",
+    "3. Investigate response truncation (~10 words cut short)",
     "4. Sync context files (.agents/ ↔ .users/)",
-    "5. Final commit"
+    "5. Final commit + PR"
   ]
 }

@@ -171,10 +171,10 @@ def talker2code2wav(
 
     for talker_output in talker_outputs:
         output = talker_output.outputs[0]
-        # All generated tokens are valid codec tokens (audio_bos is in the
-        # conditioning, not in the generated output). EOS token (6561) is
-        # excluded by the stop_token_ids mechanism.
-        codec_codes = list(output.token_ids)
+        # vllm includes stop_token_ids in output.token_ids, so strip the
+        # trailing stop token before passing to Code2Wav.  This matches
+        # the qwen3_omni pattern: seq_len = len(output.token_ids) - 1.
+        codec_codes = list(output.token_ids[:-1]) if output.token_ids else []
         code2wav_inputs.append(
             OmniTokensPrompt(
                 prompt_token_ids=codec_codes,

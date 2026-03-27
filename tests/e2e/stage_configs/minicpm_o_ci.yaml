@@ -25,9 +25,12 @@ stage_args:
     enable_prefix_caching: false
     mm_processor_cache_gb: 0
     load_format: dummy
+    # Match pipeline.yaml: disable video MM profiling (SigLIP expects batched tensors)
+    limit_mm_per_prompt: {video: 0}
   final_output: true
   final_output_type: text
-  is_comprehension: false
+  is_comprehension: true
+  preserve_multimodal: true
   default_sampling_params:
     temperature: 0.7
     top_p: 0.9
@@ -54,6 +57,8 @@ stage_args:
     max_model_len: 8192
     distributed_executor_backend: "mp"
     load_format: dummy
+    # Talker has no vision/audio encoders; disable MM profiling
+    limit_mm_per_prompt: {image: 0, video: 0}
   engine_input_source: [0]
   custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
   default_sampling_params:
@@ -83,6 +88,8 @@ stage_args:
     max_num_batched_tokens: 100000
     async_scheduling: false
     load_format: dummy
+    # Code2Wav has no vision/audio encoders; disable MM profiling
+    limit_mm_per_prompt: {image: 0, video: 0}
   engine_input_source: [1]
   custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
   final_output: true

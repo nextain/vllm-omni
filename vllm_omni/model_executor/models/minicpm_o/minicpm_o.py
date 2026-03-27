@@ -427,6 +427,8 @@ class MiniCPMOForConditionalGeneration(
 
             if isinstance(trailing, torch.Tensor) and trailing.shape[0] > 0:
                 # Still have conditioning positions to consume (boundary tokens etc.)
+                # Use conditioning alone — matches prefill path where conditioning
+                # replaces input embeddings without adding codec embeddings.
                 text_step = trailing[:1].to(device=device, dtype=codec_embeds.dtype)
                 new_trailing = (
                     trailing[1:].detach()
@@ -438,7 +440,7 @@ class MiniCPMOForConditionalGeneration(
                         dtype=trailing.dtype,
                     )
                 )
-                input_embeds = text_step + codec_embeds
+                input_embeds = text_step
                 update_dict["trailing_conditioning"] = new_trailing
             else:
                 # All conditioning consumed — pure AR codec decoding
@@ -451,8 +453,9 @@ class MiniCPMOForConditionalGeneration(
         hidden_states: torch.Tensor,
         **info_dict: object,
     ) -> dict:
-        """Persist last talker hidden state for streaming decode steps."""
-        return {"last_talker_hidden": hidden_states[-1].detach()}
+        """No-op: MiniCPM-o uses num_vq=1 (no code_predictor), so talker
+        hidden states are not consumed by downstream stages."""
+        return {}
 
     # ==================== Logits + Sampling ====================
 
