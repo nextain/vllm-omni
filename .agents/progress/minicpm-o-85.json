@@ -3,47 +3,38 @@
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
   "current_phase": "e2e_test",
   "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test", "post_test_review"],
-  "current_task": "RunPod E2E 재테스트 — Docker 템플릿 필요",
+  "current_task": "RunPod E2E 재테스트 — 크레딧 소진, 충전 후 재시도",
   "key_decisions": [
-    "Architecture aligned with original openbmb/MiniCPM-o-4_5 modeling_minicpmo.py",
-    "emb_text loaded (was skipped), semantic_projection uses ReLU (was SiLU)",
-    "build_conditioning = emb_text(tokens) + normalize(semantic_projection(hidden))",
-    "talker2code2wav strips trailing EOS (upstream qwen3_omni pattern)",
+    "Architecture aligned with original openbmb/MiniCPM-o-4_5",
+    "talker2code2wav strips trailing EOS (upstream pattern)",
     "talker_preprocess decode: conditioning-only (no codec_embeds addition)",
-    "talker_postprocess: no-op (num_vq=1, no code_predictor)"
+    "minicpmo-utils, s3tokenizer, hyperpyyaml added to requirements"
   ],
   "e2e_result": {
     "status": "PASS (pre-review-fix, old pod)",
-    "note": "EOS strip + conditioning fix applied after this E2E — re-test needed",
-    "issues_found": [
-      "<think> tokens exposed in response",
-      "Responses cut short (~10 words)",
-      "Single female voice — no voice selection"
-    ]
+    "note": "Review fixes + dependency fixes applied — re-test needed"
   },
-  "commits": [
-    "827524ad fix(#85): align talker conditioning with original MiniCPM-o architecture",
-    "d27d9ae9 fix(#85): align tts_token_ids and tts_hidden lengths in thinker2talker",
-    "d7598f75 fix(#85): adversarial review — EOS strip, conditioning fix, CI alignment"
-  ],
   "runpod": {
-    "pod_id": "mg5ieaut9cuu1b",
-    "gpu": "RTX A6000 48GB",
-    "status": "STOPPED",
-    "setup_status": "model downloaded, vllm-omni installed, server start FAILED",
-    "failure": "vllm-omni requires Docker base image vllm/vllm-openai:v0.17.0, not pip install",
-    "solution": "Use RunPod custom Docker template with vllm/vllm-openai:v0.17.0",
-    "balance": "$1.1 remaining"
-  },
-  "review_status": {
-    "adversarial_review": "6-pass, 2 consecutive clean (Pass 4 + Pass 6)",
-    "auto_fixes": 7,
-    "critical_fixes": ["EOS strip in talker2code2wav", "conditioning-only decode", "CI preserve_multimodal"]
+    "status": "CREDIT_EXHAUSTED ($0.13 remaining)",
+    "pods": {
+      "mg5ieaut9cuu1b": "A6000, EXITED, venv installed but never tested",
+      "nz7xrdfaeusdtb": "A40, EXITED, venv+model+deps installed, 3x process conflict killed server"
+    },
+    "issues_found_this_session": [
+      "Network volume (NFS) extremely slow for model loading vs local NVMe",
+      "Multiple vllm processes competing for GPU — must kill old before restart",
+      "minicpmo-utils not in requirements — Code2Wav load_from_directory fails",
+      "--skip-mm-profiling needed — _embed_pixel_values crashes on list input",
+      "workspace_setup.sh missing minicpmo-utils install step"
+    ],
+    "lesson": "Next time: Volume disk (local), not Network volume. Kill all GPU processes before restart."
   },
   "next_session": [
-    "1. RunPod Docker 템플릿 생성 (vllm/vllm-openai:v0.17.0 base)",
-    "2. E2E 재테스트 (git pull → 서버 시작 → curl)",
-    "3. L2/L3/L4 테스트 재작성",
-    "4. Context sync + Final PR"
+    "1. RunPod 크레딧 충전",
+    "2. Volume disk (로컬) pod 생성 — Network volume 사용 금지",
+    "3. bash scripts/workspace_setup.sh → bash scripts/workspace_start.sh (--skip-mm-profiling 추가 필요)",
+    "4. E2E curl 테스트",
+    "5. workspace_start.sh에 --skip-mm-profiling 반영",
+    "6. 보고서 업데이트 + context sync + PR"
   ]
 }
