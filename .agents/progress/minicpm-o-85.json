@@ -1,66 +1,49 @@
 {
   "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
-  "current_phase": "post_test_review",
+  "current_phase": "e2e_test",
   "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review", "e2e_test", "post_test_review"],
-  "current_task": "L2/L3/L4 테스트 재작성 + 남은 이슈 처리",
+  "current_task": "RunPod E2E 재테스트 — Docker 템플릿 필요",
   "key_decisions": [
     "Architecture aligned with original openbmb/MiniCPM-o-4_5 modeling_minicpmo.py",
     "emb_text loaded (was skipped), semantic_projection uses ReLU (was SiLU)",
     "build_conditioning = emb_text(tokens) + normalize(semantic_projection(hidden))",
-    "_find_tts_bound filters tts_bos/tts_eos boundary in thinker2talker",
-    "EOS token = 6561 (num_audio_tokens - 1), stop_token_ids in pipeline.yaml",
-    "All 8 config defaults aligned with HF config.json",
-    "Audio projection also uses ReLU (same MultiModalProjector as talker)",
-    "projector_spk defined but never called in original inference — loaded but unused",
-    "Boundary tokens: [conditioning, text_eos_embed, audio_bos_embed] (spk_embeds [0,768] no-op)",
-    "tts_token_ids/tts_hidden length alignment: use min(list, tensor) to handle EOS off-by-one"
+    "talker2code2wav strips trailing EOS (upstream qwen3_omni pattern)",
+    "talker_preprocess decode: conditioning-only (no codec_embeds addition)",
+    "talker_postprocess: no-op (num_vq=1, no code_predictor)"
   ],
   "e2e_result": {
-    "status": "PASS",
-    "text": "Hello! How can I help you today?",
-    "audio": "WAV base64 41020 chars (~30KB)",
-    "naia_os_integration": "PASS — Tauri app connected, text+audio displayed",
+    "status": "PASS (pre-review-fix, old pod)",
+    "note": "EOS strip + conditioning fix applied after this E2E — re-test needed",
     "issues_found": [
-      "<think> tokens exposed in response — Qwen3 reasoning not stripped",
-      "Responses cut short (~10 words) — max_tokens or tts_bound issue",
-      "Single female voice — CosyVoice2 zero speaker embedding, no voice selection"
+      "<think> tokens exposed in response",
+      "Responses cut short (~10 words)",
+      "Single female voice — no voice selection"
     ]
   },
   "commits": [
     "827524ad fix(#85): align talker conditioning with original MiniCPM-o architecture",
-    "d27d9ae9 fix(#85): align tts_token_ids and tts_hidden lengths in thinker2talker"
+    "d27d9ae9 fix(#85): align tts_token_ids and tts_hidden lengths in thinker2talker",
+    "d7598f75 fix(#85): adversarial review — EOS strip, conditioning fix, CI alignment"
   ],
   "runpod": {
-    "pod_id": "mhs8quehmr8eyg",
-    "ssh": "ssh -i ~/.ssh/id_ed25519 -tt mhs8quehmr8eyg-644113b5@ssh.runpod.io",
-    "api_key_location": "/var/home/luke/dev/my-envs/runpod.env",
-    "gpu": "A40 46GB",
-    "ports": "8091/tcp,22/tcp (HTTP proxy does NOT work, use TCP direct)",
-    "server_cmd": "vllm serve $MODEL --omni --port 8091 --host 0.0.0.0 --max-model-len 2048 --skip-mm-profiling",
-    "model_dir": "/workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots/44151b35f1b232a280bda5a87ea1a7575d5433fc",
-    "status": "STOPPED (cost saving)"
+    "pod_id": "mg5ieaut9cuu1b",
+    "gpu": "RTX A6000 48GB",
+    "status": "STOPPED",
+    "setup_status": "model downloaded, vllm-omni installed, server start FAILED",
+    "failure": "vllm-omni requires Docker base image vllm/vllm-openai:v0.17.0, not pip install",
+    "solution": "Use RunPod custom Docker template with vllm/vllm-openai:v0.17.0",
+    "balance": "$1.1 remaining"
   },
   "review_status": {
-    "upstream_review_passes": "5 passes + headless sub-agent review, all clean",
-    "issues_fixed": "A1-A12 (architecture), R1-R4 (code quality), C1 (test), debug logs (7)",
-    "remaining_known_issues": [
-      "M2: dtype hardcoded bfloat16 in talker_preprocess",
-      "M3: float32→bfloat16 double-cast between stages",
-      "thinker2talker_async_chunk not updated (dead code, async_chunk=false)",
-      "<think> token filtering (naia-os agent side)",
-      "Response truncation investigation needed",
-      "Voice selection not implemented"
-    ]
+    "adversarial_review": "6-pass, 2 consecutive clean (Pass 4 + Pass 6)",
+    "auto_fixes": 7,
+    "critical_fixes": ["EOS strip in talker2code2wav", "conditioning-only decode", "CI preserve_multimodal"]
   },
-  "completed_items": [
-    "Post-test review — tensor length fix (d27d9ae9), 5 passes + headless review all clean"
-  ],
   "next_session": [
-    "1. L2/L3/L4 테스트 재작성 (openbmb API 확인 → end2end.py → 테스트 수정 → 벤치마크 수정)",
-    "2. Fix <think> token stripping (naia-os agent side, #157)",
-    "3. Investigate response truncation (~10 words cut short)",
-    "4. Sync context files (.agents/ ↔ .users/)",
-    "5. Final commit + PR"
+    "1. RunPod Docker 템플릿 생성 (vllm/vllm-openai:v0.17.0 base)",
+    "2. E2E 재테스트 (git pull → 서버 시작 → curl)",
+    "3. L2/L3/L4 테스트 재작성",
+    "4. Context sync + Final PR"
   ]
 }
