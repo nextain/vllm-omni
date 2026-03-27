@@ -8,7 +8,8 @@ VENV=/workspace/venv
 export HF_HOME=/workspace/.cache_hf
 export TMPDIR=/workspace/tmp
 
-MODEL_PATH="/workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots/44151b35f1b232a280bda5a87ea1a7575d5433fc"
+# Auto-detect model snapshot path (handles HF model updates)
+MODEL_PATH="${MODEL_PATH:-$(find /workspace/.cache_hf/models--openbmb--MiniCPM-o-4_5/snapshots -maxdepth 1 -mindepth 1 -type d 2>/dev/null | head -1)}"
 PORT=8091
 
 # venv 확인

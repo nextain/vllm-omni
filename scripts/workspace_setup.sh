@@ -42,13 +42,10 @@ python3 -c "import torch; print('  torch:', torch.__version__, '/ CUDA:', torch.
 python3 -c "import vllm._C; print('  vllm C ext: OK')"
 
 echo "[2/4] 의존성 설치..."
-pip install setuptools_scm s3tokenizer soxr -q 2>&1 | tail -2
-pip install "librosa>=0.11.0" "diffusers>=0.36.0" "accelerate==1.12.0" -q 2>&1 | tail -2
-pip install "soundfile>=0.13.1" "torchsde>=0.2.6" "x-transformers>=2.12.2" -q 2>&1 | tail -2
-pip install "openai-whisper>=20250625" "cache-dit==1.3.0" "fa3-fwd==0.0.2" -q 2>&1 | tail -2
-pip install "aenum==3.1.16" omegaconf "imageio[ffmpeg]>=2.37.2" "onnxruntime>=1.23.2" \
-    "prettytable>=3.8.0" "resampy>=0.4.3" sox pydub "bitsandbytes>=0.48.1" -q 2>&1 | tail -2
-pip install minicpmo-utils s3tokenizer hyperpyyaml -q 2>&1 | tail -2
+# Install from requirements/common.txt (SoT) + extra build deps
+pip install setuptools_scm soxr -q 2>&1 | tail -2
+pip install -r /workspace/vllm-omni/requirements/common.txt -q 2>&1 | tail -2
+pip install -r /workspace/vllm-omni/requirements/cuda.txt -q 2>&1 | tail -2
 
 echo "[3/4] vllm-omni 설치..."
 cd /workspace/vllm-omni
