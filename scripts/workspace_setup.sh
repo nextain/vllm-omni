@@ -28,7 +28,7 @@ python3 -m venv "$VENV" --system-site-packages
 source "$VENV/bin/activate"
 
 echo "[1/4] vllm 설치..."
-pip install vllm==0.17.1 -q 2>&1 | tail -3
+pip install vllm==0.17.0 -q 2>&1 | tail -3
 
 # vllm 설치 후 torch 깨짐 방지
 python3 -c "import torch; torch.Tensor" 2>/dev/null || {

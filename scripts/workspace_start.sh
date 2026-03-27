@@ -32,9 +32,6 @@ vllm serve "$MODEL_PATH" \
   --omni \
   --port "$PORT" \
   --host 0.0.0.0 \
-  --trust-remote-code \
-  --max-model-len 4096 \
-  --dtype bfloat16 \
-  --stage-init-timeout 1800 \
-  --init-timeout 1800 \
+  --max-model-len 2048 \
+  --skip-mm-profiling \
   2>&1 | tee /workspace/vllm_omni_server.log
