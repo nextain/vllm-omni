@@ -573,26 +573,32 @@ async def omni_init_app_state(
     )
     await state.openai_serving_models.init_static_loras()
 
-    state.openai_serving_responses = (
-        OpenAIServingResponses(
-            engine_client,
-            state.openai_serving_models,
-            request_logger=request_logger,
-            chat_template=resolved_chat_template,
-            chat_template_content_format=args.chat_template_content_format,
-            return_tokens_as_token_ids=args.return_tokens_as_token_ids,
-            enable_auto_tools=args.enable_auto_tool_choice,
-            tool_parser=args.tool_call_parser,
-            tool_server=tool_server,
-            reasoning_parser=args.structured_outputs_config.reasoning_parser,
-            enable_prompt_tokens_details=args.enable_prompt_tokens_details,
-            enable_force_include_usage=args.enable_force_include_usage,
-            enable_log_outputs=args.enable_log_outputs,
-            log_error_stack=args.log_error_stack,
+    try:
+        state.openai_serving_responses = (
+            OpenAIServingResponses(
+                engine_client,
+                state.openai_serving_models,
+                request_logger=request_logger,
+                chat_template=resolved_chat_template,
+                chat_template_content_format=args.chat_template_content_format,
+                return_tokens_as_token_ids=args.return_tokens_as_token_ids,
+                enable_auto_tools=args.enable_auto_tool_choice,
+                tool_parser=args.tool_call_parser,
+                tool_server=tool_server,
+                reasoning_parser=args.structured_outputs_config.reasoning_parser,
+                enable_prompt_tokens_details=args.enable_prompt_tokens_details,
+                enable_force_include_usage=args.enable_force_include_usage,
+                enable_log_outputs=args.enable_log_outputs,
+                log_error_stack=args.log_error_stack,
+            )
+            if "generate" in supported_tasks
+            else None
         )
-        if "generate" in supported_tasks
-        else None
-    )
+    except (AttributeError, TypeError):
+        # Omni multi-stage models may not expose model_config on
+        # the orchestrator-level engine_client.  The Responses API
+        # is not used for omni inference, so skip it gracefully.
+        state.openai_serving_responses = None
     state.openai_serving_chat = (
         OmniOpenAIServingChat(
             engine_client,

@@ -34,4 +34,5 @@ vllm serve "$MODEL_PATH" \
   --host 0.0.0.0 \
   --max-model-len 2048 \
   --skip-mm-profiling \
+  --trust-remote-code \
   2>&1 | tee /workspace/vllm_omni_server.log
