@@ -48,6 +48,7 @@ pip install "soundfile>=0.13.1" "torchsde>=0.2.6" "x-transformers>=2.12.2" -q 2>
 pip install "openai-whisper>=20250625" "cache-dit==1.3.0" "fa3-fwd==0.0.2" -q 2>&1 | tail -2
 pip install "aenum==3.1.16" omegaconf "imageio[ffmpeg]>=2.37.2" "onnxruntime>=1.23.2" \
     "prettytable>=3.8.0" "resampy>=0.4.3" sox pydub "bitsandbytes>=0.48.1" -q 2>&1 | tail -2
+pip install minicpmo-utils s3tokenizer hyperpyyaml -q 2>&1 | tail -2
 
 echo "[3/4] vllm-omni 설치..."
 cd /workspace/vllm-omni

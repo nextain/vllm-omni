@@ -17,3 +17,7 @@ einops>=0.8.1
 prettytable>=3.8.0
 aenum==3.1.16
 pyzmq>=25.0.0
+# MiniCPM-o Code2Wav (CosyVoice2 flow + HiFi-GAN)
+minicpmo-utils>=0.1.0
+s3tokenizer>=0.1.0
+hyperpyyaml>=1.2.0
