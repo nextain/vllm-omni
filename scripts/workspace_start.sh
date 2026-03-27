@@ -28,11 +28,12 @@ echo "[INFO] MiniCPM-o 4.5 vllm-omni 서버 시작"
 echo "  모델: $MODEL_PATH"
 echo "  포트: $PORT"
 
+# stage_configs/minicpmo.yaml is auto-detected via model_type=minicpmo.
+# --trust-remote-code is in the YAML (engine_args.trust_remote_code: true).
+# --skip-mm-profiling is needed until _embed_pixel_values handles list inputs.
 vllm serve "$MODEL_PATH" \
   --omni \
   --port "$PORT" \
   --host 0.0.0.0 \
-  --max-model-len 2048 \
   --skip-mm-profiling \
-  --trust-remote-code \
   2>&1 | tee /workspace/vllm_omni_server.log
