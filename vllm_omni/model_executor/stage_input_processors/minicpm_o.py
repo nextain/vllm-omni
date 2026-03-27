@@ -76,10 +76,12 @@ def thinker2talker(
     device = torch.device(current_platform.device_type)
 
     # Read TTS boundary token IDs from model config (MiniCPMTTSConfig)
+    # Fall back to MiniCPM-o 4.5 defaults if config doesn't have the fields
+    # (e.g. when HF config.json is loaded via --trust-remote-code from upstream)
     thinker_stage = stage_list[engine_input_source[0]]
     tts_config = thinker_stage.vllm_config.model_config.hf_config.tts_config
-    tts_bos_id = tts_config.tts_bos_token_id
-    tts_eos_id = tts_config.tts_eos_token_id
+    tts_bos_id = getattr(tts_config, "tts_bos_token_id", 151703)
+    tts_eos_id = getattr(tts_config, "tts_eos_token_id", 151704)
 
     for thinker_output in thinker_outputs:
         output = thinker_output.outputs[0]
