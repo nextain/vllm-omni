@@ -2,40 +2,37 @@
   "issue": "#72 + #85 vLLM omni MiniCPM-o 4.5",
   "issue_url": "https://github.com/nextain/naia-os/issues/72",
   "current_phase": "e2e_test",
-  "current_task": "RunPod E2E — stage_configs/minicpmo.yaml 방식으로 서버 시작 검증",
+  "current_task": "RunPod E2E — stage_configs 방식, pipeline.yaml 삭제, api_server 원복 상태",
   "gates_cleared": ["understand", "scope", "investigate", "plan", "build", "review"],
-  "status": "stage_configs 전환 + 7-pass 리뷰 완료, RunPod E2E 대기",
+  "status": "코드 완성, 업스트림 리뷰 통과, RunPod E2E만 남음",
+  "completed_this_session": [
+    "하네스 강화: review-pass 렌즈 2개 추가 (패턴 준수, 운영 완성도)",
+    "lessons-learned 4건, upstream-contribution 안티패턴 3건 추가",
+    "stage_configs/minicpmo.yaml 생성 (qwen3_omni 패턴)",
+    "7-pass 리뷰 (5 렌즈) — 2연속 클린",
+    "업스트림 관점 리뷰 — pipeline.yaml 삭제, api_server 원복, fail-fast, set 통일",
+    "코드 추적으로 model_config/connector 불확실점 해소"
+  ],
   "key_decisions": [
-    "pipeline.yaml → stage_configs/minicpmo.yaml 전환 (qwen3_omni 패턴)",
-    "workspace_setup.sh → requirements/common.txt 직접 참조",
-    "MODEL_PATH → find 자동 탐색 (해시 하드코딩 제거)",
-    "api_server.py try/except — RunPod 테스트 후 제거 여부 결정"
+    "pipeline.yaml 삭제 — stage_configs/minicpmo.yaml만 사용",
+    "api_server.py try/except 제거 — stage_configs에서 model_config 정상 설정됨",
+    "Code2Wav load_weights fail-fast — 서버 시작 시 실패 (지연 실패 아님)",
+    "_mark_tower_model — {\"audio\"} set 통일"
   ],
   "review_status": {
-    "type": "code",
-    "lenses": ["정확성", "완전성", "일관성", "패턴 준수", "운영 완성도"],
-    "total_passes": 7,
-    "auto_fixes": 2,
-    "result": "2_consecutive_clean (Pass 6 + Pass 7)"
+    "7pass_review": "2 consecutive clean (5 lenses)",
+    "upstream_review": "PASS (pattern compliance, AI slop clean)",
+    "fixes_applied": "pipeline.yaml deleted, api_server reverted, fail-fast, set unification"
   },
-  "escalations": [
-    "PP 지원 (lambda: None) — single GPU 타겟이므로 보류",
-    "repetition_penalty 미설정 — 원본 모델 확인 필요"
-  ],
   "next_session": [
     "1. RunPod pod 시작 (Volume disk 로컬 권장)",
     "2. git clone → bash scripts/workspace_setup.sh → bash scripts/workspace_start.sh",
     "3. curl E2E 테스트",
-    "4. 성공하면: 문서 업데이트 + PR draft 재작성",
-    "5. 실패하면: 에러 로그 기반 디버깅 (stage_configs 방식이므로 StageConfigFactory 우회됨)"
+    "4. 성공: 문서 재작성 + PR draft 업데이트",
+    "5. 실패: 에러 로그 → stage_configs 경로 확인 (StageConfigFactory 우회됨)"
   ],
-  "reference_files": {
-    "midterm_review": ".agents/docs/minicpm-o-midterm-review.md",
-    "stage_config": "vllm_omni/model_executor/stage_configs/minicpmo.yaml",
-    "qwen3_reference": "vllm_omni/model_executor/stage_configs/qwen3_omni_moe.yaml"
-  },
   "runpod": {
-    "pod_nz7xrdfaeusdtb": "A40, STOPPED, 모델 /workspace/.cache_hf/에 있음",
+    "pod_nz7xrdfaeusdtb": "A40, STOPPED, /workspace/.cache_hf/에 모델 있음",
     "balance": "~$8"
   }
 }
