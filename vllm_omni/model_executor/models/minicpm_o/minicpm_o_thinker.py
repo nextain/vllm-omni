@@ -398,7 +398,7 @@ class MiniCPMOThinkerForConditionalGeneration(
             )
 
         # Audio encoder (Whisper + projection)
-        with self._mark_tower_model(vllm_config, "audio"):
+        with self._mark_tower_model(vllm_config, {"audio"}):
             self.audio_encoder = MiniCPMOAudioEncoder(
                 audio_config=config.audio_config,
                 llm_hidden_size=config.hidden_size,

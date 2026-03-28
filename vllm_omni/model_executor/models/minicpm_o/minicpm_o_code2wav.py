@@ -237,20 +237,7 @@ class MiniCPMOCode2Wav(nn.Module):
 
         if self._model_dir is not None:
             device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-            try:
-                self.load_from_directory(self._model_dir, device)
-            except FileNotFoundError as e:
-                logger.warning(
-                    "MiniCPMOCode2Wav: weight files not found: %s. "
-                    "Code2Wav stage will not function.",
-                    e,
-                )
-            except ImportError as e:
-                logger.warning(
-                    "MiniCPMOCode2Wav: %s. "
-                    "Install minicpmo-utils: pip install minicpmo-utils",
-                    e,
-                )
+            self.load_from_directory(self._model_dir, device)
         else:
             logger.warning(
                 "MiniCPMOCode2Wav: model_dir not set; skipping weight loading."
