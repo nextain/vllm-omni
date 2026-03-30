@@ -19,15 +19,15 @@ stage_args:
       model_arch: MiniCPMOForConditionalGeneration
       worker_type: ar
       scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
-      gpu_memory_utilization: 0.80
+      gpu_memory_utilization: 0.75
       enforce_eager: true
       trust_remote_code: true
       engine_output_type: latent
       distributed_executor_backend: "mp"
       enable_prefix_caching: false
-      max_num_batched_tokens: 4096
-      max_model_len: 4096
-      max_num_seqs: 4
+      max_num_batched_tokens: 1400
+      max_model_len: 1400
+      max_num_seqs: 2
       limit_mm_per_prompt: {video: 0}
       tensor_parallel_size: 1
     final_output: true
