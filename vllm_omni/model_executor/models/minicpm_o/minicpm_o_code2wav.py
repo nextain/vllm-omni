@@ -258,8 +258,11 @@ class MiniCPMOCode2Wav(nn.Module):
                     flow_yaml,
                 )
             else:
+                # Use current CUDA device (set by vllm worker based on stage config)
                 device = torch.device(
-                    "cuda" if torch.cuda.is_available() else "cpu"
+                    f"cuda:{torch.cuda.current_device()}"
+                    if torch.cuda.is_available()
+                    else "cpu"
                 )
                 self.load_from_directory(self._model_dir, device)
         else:
