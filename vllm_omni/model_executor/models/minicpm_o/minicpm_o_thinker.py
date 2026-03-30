@@ -32,7 +32,7 @@ from vllm.model_executor.models.interfaces import (
 )
 from vllm.model_executor.models.module_mapping import MultiModelKeys
 from vllm.model_executor.models.qwen3 import Qwen3ForCausalLM
-from vllm.model_executor.models.siglip import SiglipVisionTransformer
+# Vision encoder uses Idefics2VisionTransformer (imported lazily in MiniCPMOVisionEncoder)
 from vllm.model_executor.model_loader.weight_utils import default_weight_loader
 from vllm.model_executor.models.utils import (
     AutoWeightsLoader,
@@ -170,10 +170,10 @@ class MiniCPMOResampler(nn.Module):
 
 
 class MiniCPMOVisionEncoder(nn.Module):
-    """SigLIP vision transformer + Resampler for MiniCPM-o.
+    """Idefics2 vision transformer + Resampler for MiniCPM-o.
 
-    Processes images at native resolution (slice-based) through SigLIP,
-    then projects to LLM embedding dimension via cross-attention resampler.
+    Uses Idefics2VisionTransformer (same as vllm's MiniCPMV2_6) which supports
+    patch_attention_mask for variable-resolution image slices (NaViT pattern).
     """
 
     def __init__(
@@ -186,16 +186,19 @@ class MiniCPMOVisionEncoder(nn.Module):
         prefix: str = "",
     ):
         super().__init__()
-        # Optionally drop the last SigLIP encoder layer
-        num_hidden_layers_override = (
-            vision_config.num_hidden_layers - 1 if drop_vision_last_layer else None
+        from vllm.model_executor.models.idefics2_vision_model import (
+            Idefics2VisionTransformer,
         )
-        self.encoder = SiglipVisionTransformer(
+
+        self.encoder = Idefics2VisionTransformer(
             vision_config,
             quant_config=quant_config,
-            num_hidden_layers_override=num_hidden_layers_override,
+            apply_encoder_attention_mask=True,
             prefix=maybe_prefix(prefix, "encoder"),
         )
+        if drop_vision_last_layer:
+            self.encoder.encoder.layers = self.encoder.encoder.layers[:-1]
+        self.embed_dim = self.encoder.embeddings.embed_dim
         self.resampler = MiniCPMOResampler(
             num_queries=query_num,
             embed_dim=llm_hidden_size,
@@ -207,17 +210,22 @@ class MiniCPMOVisionEncoder(nn.Module):
         self,
         pixel_values: torch.Tensor,
         tgt_sizes: torch.Tensor,
+        patch_attention_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Args:
-            pixel_values: [batch, C, H, W] - pre-cropped image patches
+            pixel_values: [batch, C, H, W] - zero-padded image patches
             tgt_sizes: [batch, 2] - (patch_h, patch_w) for each image
+            patch_attention_mask: [batch, 1, max_patches] — valid patch mask
 
         Returns:
             Visual embeddings [batch, query_num, llm_hidden_size]
         """
-        # SiglipVisionTransformer.forward returns [batch, num_patches, hidden]
-        visual_features = self.encoder(pixel_values)
+        visual_features = self.encoder(
+            pixel_values,
+            patch_attention_mask=patch_attention_mask,
+            tgt_sizes=tgt_sizes,
+        )
         return self.resampler(visual_features, tgt_sizes)
 
 
@@ -458,23 +466,34 @@ class MiniCPMOThinkerForConditionalGeneration(
             pixel_values: list of [C, H, W] tensors (flattened, variable spatial)
             tgt_sizes: [N, 2] — (patch_h, patch_w) for each item
         """
-        # vllm's SiglipVisionTransformer doesn't support patch_attention_mask,
-        # so process each image slice individually (handles variable spatial dims).
-        results: list[torch.Tensor] = []
-        for i, pv in enumerate(pixel_values):
-            if pv.dim() == 2:
-                # [C*H, W] flattened — skip (shouldn't happen with flatten_bn)
-                continue
-            if pv.dim() == 3:
-                pv = pv.unsqueeze(0)  # [1, C, H, W]
-            ts = tgt_sizes[i : i + 1]  # [1, 2]
-            embed = self.visual(pv, ts)  # [1, query_num, llm_hidden]
-            results.append(embed.squeeze(0))  # [query_num, llm_hidden]
+        B = len(pixel_values)
+        P = pixel_values[0].shape[-2]
+        L = max(item.shape[-1] for item in pixel_values)
+        device = pixel_values[0].device
+        dtype = pixel_values[0].dtype
 
-        if not results:
-            device = pixel_values[0].device if pixel_values else torch.device("cpu")
-            return torch.empty(0, 0, device=device)
-        return torch.stack(results)  # [B, query_num, llm_hidden]
+        # Zero-pad to max spatial dim
+        all_pixel_values = torch.zeros(
+            (B, 3, P, L), dtype=dtype, device=device
+        )
+        for i, pv_item in enumerate(pixel_values):
+            L_item = pv_item.shape[-1]
+            all_pixel_values[i, ..., :L_item] = pv_item
+
+        # Build patch_attention_mask (valid patches per image)
+        num_patches = tgt_sizes.prod(-1)
+        max_patches = int(num_patches.max().item())
+        patch_attn_mask = torch.zeros(
+            (B, max_patches), dtype=torch.bool, device=device
+        )
+        for i, n in enumerate(num_patches):
+            patch_attn_mask[i, :n] = True
+
+        return self.visual(
+            all_pixel_values,
+            tgt_sizes,
+            patch_attention_mask=patch_attn_mask.unsqueeze(1),
+        )
 
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
         """Process vision and audio inputs into embeddings.
