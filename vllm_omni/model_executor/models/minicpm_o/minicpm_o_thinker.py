@@ -458,35 +458,23 @@ class MiniCPMOThinkerForConditionalGeneration(
             pixel_values: list of [C, H, W] tensors (flattened, variable spatial)
             tgt_sizes: [N, 2] — (patch_h, patch_w) for each item
         """
-        B = len(pixel_values)
-        P = pixel_values[0].shape[-2]
-        L = max(item.shape[-1] for item in pixel_values)
-        device = pixel_values[0].device
-        dtype = pixel_values[0].dtype
+        # vllm's SiglipVisionTransformer doesn't support patch_attention_mask,
+        # so process each image slice individually (handles variable spatial dims).
+        results: list[torch.Tensor] = []
+        for i, pv in enumerate(pixel_values):
+            if pv.dim() == 2:
+                # [C*H, W] flattened — skip (shouldn't happen with flatten_bn)
+                continue
+            if pv.dim() == 3:
+                pv = pv.unsqueeze(0)  # [1, C, H, W]
+            ts = tgt_sizes[i : i + 1]  # [1, 2]
+            embed = self.visual(pv, ts)  # [1, query_num, llm_hidden]
+            results.append(embed.squeeze(0))  # [query_num, llm_hidden]
 
-        all_pixel_values = torch.zeros(
-            (B, 3, P, L), dtype=dtype, device=device
-        )
-        for i, pv_item in enumerate(pixel_values):
-            L_item = pv_item.shape[-1]
-            all_pixel_values[i, ..., :L_item] = pv_item
-
-        # Build patch_attention_mask for variable-size patches (vllm MiniCPMV pattern)
-        num_patches = tgt_sizes.prod(-1)
-        max_patches = int(num_patches.max().item())
-        patch_attn_mask = torch.zeros(
-            (B, max_patches), dtype=torch.bool, device=device
-        )
-        for i, n in enumerate(num_patches):
-            patch_attn_mask[i, :n] = True
-
-        # Call SigLIP encoder with mask, then resampler
-        vision_embedding = self.visual.encoder(
-            all_pixel_values,
-            patch_attention_mask=patch_attn_mask.unsqueeze(1),
-            tgt_sizes=tgt_sizes,
-        )
-        return self.visual.resampler(vision_embedding, tgt_sizes)
+        if not results:
+            device = pixel_values[0].device if pixel_values else torch.device("cpu")
+            return torch.empty(0, 0, device=device)
+        return torch.stack(results)  # [B, query_num, llm_hidden]
 
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
         """Process vision and audio inputs into embeddings.
