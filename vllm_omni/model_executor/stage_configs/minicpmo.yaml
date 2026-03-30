@@ -26,6 +26,7 @@ stage_args:
       enable_prefix_caching: false
       max_num_batched_tokens: 4096
       max_model_len: 4096
+      max_num_seqs: 4
       limit_mm_per_prompt: {video: 0}
       tensor_parallel_size: 1
     final_output: true
