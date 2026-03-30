@@ -53,6 +53,7 @@ stage_args:
       model_arch: MiniCPMOForConditionalGeneration
       worker_type: ar
       scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+      hf_config_name: tts_config
       gpu_memory_utilization: 0.07
       enforce_eager: true
       trust_remote_code: true
