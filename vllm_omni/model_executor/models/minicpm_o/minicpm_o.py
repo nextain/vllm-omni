@@ -332,7 +332,9 @@ class MiniCPMOForConditionalGeneration(
                 },
             )
 
-        return model_outputs  # type: ignore[return-value]
+        raise ValueError(
+            f"make_omni_output: unhandled model_stage={self.model_stage!r}"
+        )
 
     # ==================== Talker pre/postprocess ====================
 

@@ -178,19 +178,26 @@ class MiniCPMOCode2Wav(nn.Module):
         flow = self.__dict__["_flow"]
         hift = self.__dict__["_hift"]
 
-        # Lazy move from CPU to the correct GPU on first forward call
-        if flow is not None and not next(flow.parameters()).is_cuda:
-            target = codes.device
-            flow.to(target)
-            hift.to(target)
-
         if flow is None or hift is None:
             raise RuntimeError(
                 "MiniCPMOCode2Wav: model not loaded. Call load_from_directory() first."
             )
 
         device = codes.device
-        dtype = next(flow.parameters()).dtype
+
+        # Lazy move from CPU to the correct GPU on first forward call
+        try:
+            flow_device = next(flow.parameters()).device
+        except StopIteration:
+            flow_device = next(flow.buffers()).device
+        if flow_device != device:
+            flow.to(device)
+            hift.to(device)
+
+        try:
+            dtype = next(flow.parameters()).dtype
+        except StopIteration:
+            dtype = torch.float32
         spk_dim = self.__dict__["_spk_embed_dim"]
 
         # CosyVoice2 flow.inference() requires batch_size == 1
