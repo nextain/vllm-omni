@@ -201,24 +201,17 @@ class MiniCPMOForConditionalGeneration(
         multimodal_embeddings=None,
         is_multimodal=None,
     ) -> torch.Tensor:
-        if self.model_stage == "thinker":
-            return self.thinker.embed_input_ids(
-                input_ids=input_ids,
-                multimodal_embeddings=multimodal_embeddings,
-                is_multimodal=is_multimodal,
-            )
-        if self.model_stage == "talker":
-            # Return a dummy tensor sized to model_config.hidden_size (4096).
-            # The pre-allocated inputs_embeds buffer in GPUModelRunner is sized
-            # for the main model (4096-wide).  talker_preprocess (has_preprocess=True)
-            # will overwrite this slice with the correct 768-wide conditioning.
-            # forward() falls back to talker.embed_input_ids() if shape[-1] != 768.
+        if self.model_stage == "code2wav":
+            # Code2Wav: no token embeddings; return a zero dummy tensor.
             return torch.zeros_like(input_ids).reshape(-1, 1).repeat(
                 1, self.vllm_config.model_config.get_hidden_size()
             )
-        # code2wav: no token embeddings; return a zero dummy tensor.
-        return torch.zeros_like(input_ids).reshape(-1, 1).repeat(
-            1, self.vllm_config.model_config.get_hidden_size()
+        # Thinker and Talker: delegate to the active model's embed_input_ids.
+        # Talker returns 768-wide embeddings (codec_embedding), not 4096.
+        return self.model.embed_input_ids(
+            input_ids=input_ids,
+            multimodal_embeddings=multimodal_embeddings,
+            is_multimodal=is_multimodal,
         )
 
     def embed_multimodal(self, **kwargs: object):
