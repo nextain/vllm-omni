@@ -64,9 +64,21 @@ class MiniCPMOCode2Wav(nn.Module):
     ) -> None:
         super().__init__()
 
-        self._model_dir: str | None = (
-            vllm_config.model_config.model if vllm_config is not None else None
-        )
+        self._model_dir: str | None = None
+        if vllm_config is not None:
+            model_id = vllm_config.model_config.model
+            # Resolve HF model ID to local snapshot directory
+            if os.path.isdir(model_id):
+                self._model_dir = model_id
+            else:
+                try:
+                    from huggingface_hub import snapshot_download
+                    self._model_dir = snapshot_download(
+                        model_id,
+                        local_files_only=True,  # Don't re-download
+                    )
+                except Exception:
+                    self._model_dir = model_id  # Fallback
         # Flow and HiFi-GAN loaded lazily in load_from_directory().
         # Stored via __dict__ to bypass nn.Module's __setattr__ and keep
         # them out of state_dict() / named_parameters().
