@@ -132,7 +132,8 @@ def thinker2talker(
             "thinker_token_ids": torch.tensor(
                 tts_token_ids, dtype=torch.long, device=device,
             ),
-            "thinker_hidden_states": tts_hidden.detach().to(device=device),
+            # Cast to float32 for serialization (numpy doesn't support bfloat16)
+            "thinker_hidden_states": tts_hidden.detach().float().to(device=device),
         }
 
         # +2 for text_eos and audio_bos boundary tokens appended in talker_preprocess
