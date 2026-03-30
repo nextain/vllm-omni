@@ -444,97 +444,81 @@ class MiniCPMOThinkerForConditionalGeneration(
             tower_model=["visual.encoder.", "audio_encoder."],
         )
 
-    def _embed_pixel_values(
+    def get_vision_hidden_states(
         self,
-        pixel_values: torch.Tensor | list[torch.Tensor],
-        tgt_sizes: torch.Tensor | None,
-    ) -> tuple[torch.Tensor, ...]:
-        """Run SigLIP + resampler on a batch of image patches.
+        pixel_values: list[torch.Tensor],
+        tgt_sizes: torch.Tensor,
+    ) -> torch.Tensor:
+        """Zero-pad variable-size image patches and run SigLIP + resampler.
 
-        pixel_values may be:
-          - torch.Tensor [batch, C, H, W] — all patches same spatial size
-          - list[torch.Tensor] — per-item list when spatial dims differ
-            Each element is [num_slices, C, H, W]; tgt_sizes is [total_slices, 2]
+        Follows vllm MiniCPMV get_vision_hidden_states pattern exactly:
+        zero-pad to max spatial dim, use patch_attn_mask for valid patches.
+
+        Args:
+            pixel_values: list of [C, H, W] tensors (flattened, variable spatial)
+            tgt_sizes: [N, 2] — (patch_h, patch_w) for each item
         """
-        if isinstance(pixel_values, (list, tuple)):
-            results: list[torch.Tensor] = []
-            slice_offset = 0
-            for pv in pixel_values:
-                if not isinstance(pv, torch.Tensor):
-                    # Profile run may pass nested lists of tensors with varying spatial dims.
-                    # Process each sub-tensor individually when they can't be stacked.
-                    if isinstance(pv, (list, tuple)):
-                        if len(pv) == 0:
-                            continue
-                        if isinstance(pv[0], torch.Tensor):
-                            # List of tensors with possibly different shapes — process individually
-                            for sub_pv in pv:
-                                if sub_pv.dim() == 3:
-                                    sub_pv = sub_pv.unsqueeze(0)
-                                n = sub_pv.shape[0]
-                                if tgt_sizes is not None:
-                                    ts = tgt_sizes[slice_offset : slice_offset + n]
-                                else:
-                                    h = w = int(sub_pv.shape[-1] ** 0.5)
-                                    ts = torch.tensor([[h, w]] * n, device=sub_pv.device)
-                                ve = self.visual(sub_pv, ts)
-                                results.append(ve.flatten(0, 1))
-                                slice_offset += n
-                            continue
-                        pv = torch.as_tensor(pv)
-                    else:
-                        pv = torch.as_tensor(pv)
-                if pv.dim() == 3:
-                    pv = pv.unsqueeze(0)  # [1, C, H, W]
-                num_slices = pv.shape[0]
-                if tgt_sizes is not None:
-                    ts = tgt_sizes[slice_offset : slice_offset + num_slices]
-                else:
-                    h = w = int(pv.shape[-1] ** 0.5)
-                    ts = torch.tensor([[h, w]] * num_slices, device=pv.device)
-                visual_embed = self.visual(pv, ts)  # [num_slices, query_num, llm_hidden]
-                results.append(visual_embed.flatten(0, 1))  # [num_slices*query_num, llm_hidden]
-                slice_offset += num_slices
-            return tuple(results)
+        B = len(pixel_values)
+        P = pixel_values[0].shape[-2]
+        L = max(item.shape[-1] for item in pixel_values)
+        device = pixel_values[0].device
+        dtype = pixel_values[0].dtype
 
-        # Batched tensor path (same spatial dims)
-        if tgt_sizes is None:
-            n_patches = pixel_values.shape[1]
-            h = w = int(n_patches**0.5)
-            tgt_sizes = torch.tensor(
-                [[h, w]] * pixel_values.shape[0],
-                device=pixel_values.device,
-            )
-        visual_embeds = self.visual(pixel_values, tgt_sizes)
-        return tuple(visual_embeds.unbind(dim=0))
+        all_pixel_values = torch.zeros(
+            (B, 3, P, L), dtype=dtype, device=device
+        )
+        for i, pv_item in enumerate(pixel_values):
+            L_item = pv_item.shape[-1]
+            all_pixel_values[i, ..., :L_item] = pv_item
+
+        return self.visual(all_pixel_values, tgt_sizes)
 
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
         """Process vision and audio inputs into embeddings.
 
-        Handles three kwargs layouts emitted by MiniCPMVMultiModalProcessor:
-          - image: pixel_values + tgt_sizes
-          - video: video_pixel_values + video_tgt_sizes (same tensor format)
-          - audio: input_audio_features
+        Reuses vllm MiniCPMV's _parse_and_validate_multimodal_inputs (inherited
+        via @MULTIMODAL_REGISTRY processor) for correct dummy-data handling,
+        then delegates vision to get_vision_hidden_states (zero-pad pattern).
         """
+        from vllm.model_executor.models.minicpmv import flatten_bn
+
         multimodal_embeddings: tuple[torch.Tensor, ...] = ()
 
-        # Images
+        # Images — parse via flatten_bn (handles variable-size slices)
         pixel_values = kwargs.get("pixel_values")
         if pixel_values is not None:
-            tgt_sizes: torch.Tensor | None = kwargs.get("tgt_sizes")  # type: ignore
-            multimodal_embeddings += self._embed_pixel_values(
-                pixel_values,  # type: ignore[arg-type]
-                tgt_sizes,
-            )
+            tgt_sizes = kwargs.get("tgt_sizes")
+            # flatten_bn: list[Tensor[num_slices, C, H, W]] → list[Tensor[C, H, W]]
+            num_slices_flat = torch.tensor([len(ps) for ps in pixel_values])
+            pixel_values_flat = flatten_bn(pixel_values)
+            tgt_sizes_flat = flatten_bn(tgt_sizes, concat=True)
 
-        # Videos — each item is a batch of frames; processed identically to images
+            vision_embeds = self.get_vision_hidden_states(
+                pixel_values_flat, tgt_sizes_flat
+            )
+            # Split back per-image, flatten (query_num * num_slices) per image
+            per_image = [
+                e.flatten(0, 1)
+                for e in vision_embeds.split(num_slices_flat.tolist())
+            ]
+            multimodal_embeddings += tuple(per_image)
+
+        # Videos — same as images
         video_pixel_values = kwargs.get("video_pixel_values")
         if video_pixel_values is not None:
-            video_tgt_sizes: torch.Tensor | None = kwargs.get("video_tgt_sizes")  # type: ignore
-            multimodal_embeddings += self._embed_pixel_values(
-                video_pixel_values,  # type: ignore[arg-type]
-                video_tgt_sizes,
+            video_tgt_sizes = kwargs.get("video_tgt_sizes")
+            num_slices_flat = torch.tensor([len(ps) for ps in video_pixel_values])
+            pixel_values_flat = flatten_bn(video_pixel_values)
+            tgt_sizes_flat = flatten_bn(video_tgt_sizes, concat=True)
+
+            vision_embeds = self.get_vision_hidden_states(
+                pixel_values_flat, tgt_sizes_flat
             )
+            per_video = [
+                e.flatten(0, 1)
+                for e in vision_embeds.split(num_slices_flat.tolist())
+            ]
+            multimodal_embeddings += tuple(per_video)
 
         # Audio
         input_audio_features = kwargs.get("input_audio_features")
