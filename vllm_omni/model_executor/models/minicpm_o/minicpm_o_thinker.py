@@ -461,8 +461,27 @@ class MiniCPMOThinkerForConditionalGeneration(
             slice_offset = 0
             for pv in pixel_values:
                 if not isinstance(pv, torch.Tensor):
-                    if isinstance(pv, (list, tuple)) and len(pv) > 0 and isinstance(pv[0], torch.Tensor):
-                        pv = torch.stack(pv)
+                    # Profile run may pass nested lists of tensors with varying spatial dims.
+                    # Process each sub-tensor individually when they can't be stacked.
+                    if isinstance(pv, (list, tuple)):
+                        if len(pv) == 0:
+                            continue
+                        if isinstance(pv[0], torch.Tensor):
+                            # List of tensors with possibly different shapes — process individually
+                            for sub_pv in pv:
+                                if sub_pv.dim() == 3:
+                                    sub_pv = sub_pv.unsqueeze(0)
+                                n = sub_pv.shape[0]
+                                if tgt_sizes is not None:
+                                    ts = tgt_sizes[slice_offset : slice_offset + n]
+                                else:
+                                    h = w = int(sub_pv.shape[-1] ** 0.5)
+                                    ts = torch.tensor([[h, w]] * n, device=sub_pv.device)
+                                ve = self.visual(sub_pv, ts)
+                                results.append(ve.flatten(0, 1))
+                                slice_offset += n
+                            continue
+                        pv = torch.as_tensor(pv)
                     else:
                         pv = torch.as_tensor(pv)
                 if pv.dim() == 3:
