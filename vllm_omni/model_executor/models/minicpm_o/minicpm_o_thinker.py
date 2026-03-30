@@ -471,7 +471,22 @@ class MiniCPMOThinkerForConditionalGeneration(
             L_item = pv_item.shape[-1]
             all_pixel_values[i, ..., :L_item] = pv_item
 
-        return self.visual(all_pixel_values, tgt_sizes)
+        # Build patch_attention_mask for variable-size patches (vllm MiniCPMV pattern)
+        num_patches = tgt_sizes.prod(-1)
+        max_patches = int(num_patches.max().item())
+        patch_attn_mask = torch.zeros(
+            (B, max_patches), dtype=torch.bool, device=device
+        )
+        for i, n in enumerate(num_patches):
+            patch_attn_mask[i, :n] = True
+
+        # Call SigLIP encoder with mask, then resampler
+        vision_embedding = self.visual.encoder(
+            all_pixel_values,
+            patch_attention_mask=patch_attn_mask.unsqueeze(1),
+            tgt_sizes=tgt_sizes,
+        )
+        return self.visual.resampler(vision_embedding, tgt_sizes)
 
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
         """Process vision and audio inputs into embeddings.
