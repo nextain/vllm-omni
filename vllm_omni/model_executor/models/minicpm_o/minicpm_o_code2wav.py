@@ -120,7 +120,7 @@ class MiniCPMOCode2Wav(nn.Module):
             torch.load(flow_pt, map_location=device, weights_only=True),
             strict=True,
         )
-        flow.to(device).eval()
+        flow.eval()  # GPU move deferred to first forward() call
         self.__dict__["_flow"] = flow
 
         # Extract speaker embedding dimension from flow model
@@ -143,7 +143,7 @@ class MiniCPMOCode2Wav(nn.Module):
         # HiFi-GAN uses float32 internally (SineGenerator produces float32 sine
         # waves that must match linear layer dtypes).  Keep in float32 regardless
         # of the main model dtype.
-        hift.float().to(device).eval()
+        hift.float().eval()  # GPU move deferred to first forward() call
         self.__dict__["_hift"] = hift
 
         logger.info(
@@ -177,6 +177,12 @@ class MiniCPMOCode2Wav(nn.Module):
 
         flow = self.__dict__["_flow"]
         hift = self.__dict__["_hift"]
+
+        # Lazy move from CPU to the correct GPU on first forward call
+        if flow is not None and not next(flow.parameters()).is_cuda:
+            target = codes.device
+            flow.to(target)
+            hift.to(target)
 
         if flow is None or hift is None:
             raise RuntimeError(
@@ -258,13 +264,11 @@ class MiniCPMOCode2Wav(nn.Module):
                     flow_yaml,
                 )
             else:
-                # Use current CUDA device (set by vllm worker based on stage config)
-                device = torch.device(
-                    f"cuda:{torch.cuda.current_device()}"
-                    if torch.cuda.is_available()
-                    else "cpu"
-                )
-                self.load_from_directory(self._model_dir, device)
+                # Load to CPU first, then move to correct GPU in forward().
+                # vllm's multi-stage executor may not have set CUDA device yet
+                # during load_weights(), so loading directly to GPU can hit
+                # the wrong device or OOM.
+                self.load_from_directory(self._model_dir, torch.device("cpu"))
         else:
             logger.warning(
                 "MiniCPMOCode2Wav: model_dir not set; skipping weight loading."
