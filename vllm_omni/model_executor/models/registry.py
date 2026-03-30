@@ -152,6 +152,34 @@ _OMNI_MODELS = {
         "VoxtralTTSAudioGenerationForConditionalGeneration",
     ),
     "VoxtralTTSAudioTokenizer": ("voxtral_tts", "voxtral_tts_audio_tokenizer", "VoxtralTTSAudioTokenizer"),
+    ## MiniCPM-o 4.5 (Thinker + Talker + Code2Wav)
+    # "MiniCPMO" overrides vllm's built-in MiniCPMO4_5 to load our multi-stage
+    # implementation instead of the monolithic upstream class.
+    "MiniCPMO": (
+        "minicpm_o",
+        "minicpm_o",
+        "MiniCPMOForConditionalGeneration",
+    ),
+    "MiniCPMOForConditionalGeneration": (
+        "minicpm_o",
+        "minicpm_o",
+        "MiniCPMOForConditionalGeneration",
+    ),
+    "MiniCPMOThinkerForConditionalGeneration": (
+        "minicpm_o",
+        "minicpm_o_thinker",
+        "MiniCPMOThinkerForConditionalGeneration",
+    ),
+    "MiniCPMOTalkerForConditionalGeneration": (
+        "minicpm_o",
+        "minicpm_o_talker",
+        "MiniCPMOTalkerForConditionalGeneration",
+    ),
+    "MiniCPMOCode2Wav": (
+        "minicpm_o",
+        "minicpm_o_code2wav",
+        "MiniCPMOCode2Wav",
+    ),
 }
 
 
