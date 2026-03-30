@@ -460,6 +460,8 @@ class MiniCPMOThinkerForConditionalGeneration(
             results: list[torch.Tensor] = []
             slice_offset = 0
             for pv in pixel_values:
+                if not isinstance(pv, torch.Tensor):
+                    pv = torch.tensor(pv)
                 if pv.dim() == 3:
                     pv = pv.unsqueeze(0)  # [1, C, H, W]
                 num_slices = pv.shape[0]
