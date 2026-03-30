@@ -393,7 +393,9 @@ class MiniCPMOForConditionalGeneration(
 
             if thinker_hidden_states is not None and thinker_token_ids is not None:
                 t_ids = thinker_token_ids.to(device=device, dtype=torch.long)
-                t_hid = thinker_hidden_states.to(device=device)
+                # Serialization cast hidden to float32; restore model dtype
+                model_dtype = next(self.talker.parameters()).dtype
+                t_hid = thinker_hidden_states.to(device=device, dtype=model_dtype)
 
                 # Build conditioning: emb_text(tokens) + normalize(semantic_projection(hidden))
                 full_conditioning = self.talker.build_conditioning(t_ids, t_hid)
