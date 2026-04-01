@@ -25,10 +25,10 @@ import torch.nn as nn
 from vllm.config import VllmConfig
 from vllm.logger import init_logger
 from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
-from vllm.model_executor.models.minicpmv import (
-    MiniCPMVDummyInputsBuilder,
-    MiniCPMVMultiModalProcessor,
-    MiniCPMVProcessingInfo,
+from vllm.model_executor.models.minicpmo import (
+    MiniCPMODummyInputsBuilder,
+    MiniCPMOMultiModalProcessor,
+    MiniCPMOProcessingInfo,
 )
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
@@ -46,9 +46,9 @@ logger = init_logger(__name__)
 
 
 @MULTIMODAL_REGISTRY.register_processor(
-    MiniCPMVMultiModalProcessor,
-    info=MiniCPMVProcessingInfo,
-    dummy_inputs=MiniCPMVDummyInputsBuilder,
+    MiniCPMOMultiModalProcessor,
+    info=MiniCPMOProcessingInfo,
+    dummy_inputs=MiniCPMODummyInputsBuilder,
 )
 class MiniCPMOForConditionalGeneration(
     nn.Module,
