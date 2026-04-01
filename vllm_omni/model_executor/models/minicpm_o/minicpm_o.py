@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from functools import cached_property
 
 import torch
@@ -30,23 +30,9 @@ from vllm.model_executor.models.minicpmv import (
     MiniCPMVMultiModalProcessor,
     MiniCPMVProcessingInfo,
 )
-
-
-class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
-    """Extends MiniCPMV to support audio input via Whisper encoder."""
-
-    def get_supported_mm_limits(self):
-        limits = dict(super().get_supported_mm_limits())
-        limits["audio"] = None  # Allow audio input
-        return limits
-
-    def get_data_parser(self):
-        from vllm.multimodal.parse import MultiModalDataParser
-        return MultiModalDataParser(
-            target_sr=16000,  # Whisper encoder expects 16kHz
-        )
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
+from vllm.multimodal.parse import MultiModalDataParser
 from vllm.sequence import IntermediateTensors
 from vllm.v1.sample.sampler import Sampler
 
@@ -60,8 +46,65 @@ from vllm_omni.model_executor.models.output_templates import OmniOutput
 logger = init_logger(__name__)
 
 
+class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
+    """Extends MiniCPMV to support audio + image + video input."""
+
+    def get_supported_mm_limits(self):
+        limits = dict(super().get_supported_mm_limits())
+        limits["audio"] = None
+        return limits
+
+    def get_data_parser(self):
+        return MultiModalDataParser(target_sr=16000)
+
+
+class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
+    """Extends MiniCPMV processor to handle audio input via Whisper features.
+
+    Audio flow: audio_url → resample to 16kHz → mel spectrogram (via openbmb
+    MiniCPMAAudioProcessor) → input_audio_features kwarg → thinker Whisper encoder.
+    """
+
+    def _call_hf_processor(
+        self,
+        prompt: str,
+        mm_data: Mapping[str, object],
+        mm_kwargs: Mapping[str, object],
+        tok_kwargs: Mapping[str, object],
+    ) -> "BatchFeature":
+        import numpy as np
+        from transformers import BatchFeature
+
+        mm_data = dict(mm_data)
+        audios = mm_data.pop("audios", None)
+
+        # Process image/video via parent MiniCPMV processor
+        result = super()._call_hf_processor(prompt, mm_data, mm_kwargs, tok_kwargs)
+
+        # Process audio via openbmb's MiniCPMAAudioProcessor
+        if audios:
+            hf_processor = self.info.get_hf_processor(**mm_kwargs)
+            audio_processor = hf_processor.audio_processor
+            audio_features_list = []
+            for audio in audios:
+                if isinstance(audio, np.ndarray):
+                    features = audio_processor(
+                        audio,
+                        sampling_rate=16000,
+                        return_tensors="pt",
+                    )
+                    audio_features_list.append(
+                        features["input_features"].squeeze(0)
+                    )
+            if audio_features_list:
+                import torch
+                result["input_audio_features"] = audio_features_list
+
+        return result
+
+
 @MULTIMODAL_REGISTRY.register_processor(
-    MiniCPMVMultiModalProcessor,
+    MiniCPMOMultiModalProcessor,
     info=MiniCPMOProcessingInfo,
     dummy_inputs=MiniCPMVDummyInputsBuilder,
 )
