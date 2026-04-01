@@ -17,7 +17,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable
 from functools import cached_property
 
 import torch
@@ -32,7 +32,6 @@ from vllm.model_executor.models.minicpmv import (
 )
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
-from vllm.multimodal.parse import MultiModalDataParser
 from vllm.sequence import IntermediateTensors
 from vllm.v1.sample.sampler import Sampler
 
@@ -46,84 +45,9 @@ from vllm_omni.model_executor.models.output_templates import OmniOutput
 logger = init_logger(__name__)
 
 
-class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
-    """Extends MiniCPMV to support audio + image + video input."""
-
-    def get_supported_mm_limits(self):
-        limits = dict(super().get_supported_mm_limits())
-        limits["audio"] = None
-        return limits
-
-    def get_data_parser(self):
-        return MultiModalDataParser(target_sr=16000)
-
-
-class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
-    """Extends MiniCPMV processor to handle audio + image/video input.
-
-    Audio: openbmb MiniCPMOProcessor (placeholder insertion + mel features).
-    Image/Video: parent MiniCPMV processor.
-    Registers audio fields via _get_mm_fields_config for vllm pipeline.
-    """
-
-    def _get_mm_fields_config(
-        self,
-        hf_inputs: "BatchFeature",
-        hf_processor_mm_kwargs: Mapping[str, object],
-    ) -> Mapping[str, "MultiModalFieldConfig"]:
-        from vllm.multimodal.processing.processor import MultiModalFieldConfig
-
-        fields = dict(
-            super()._get_mm_fields_config(hf_inputs, hf_processor_mm_kwargs)
-        )
-        if "input_audio_features" in hf_inputs:
-            fields["input_audio_features"] = MultiModalFieldConfig.batched(
-                "audio"
-            )
-        return fields
-
-    def _call_hf_processor(
-        self,
-        prompt: str,
-        mm_data: Mapping[str, object],
-        mm_kwargs: Mapping[str, object],
-        tok_kwargs: Mapping[str, object],
-    ) -> "BatchFeature":
-        import numpy as np
-
-        mm_data = dict(mm_data)
-        audios = mm_data.pop("audios", None)
-
-        if not audios:
-            return super()._call_hf_processor(
-                prompt, mm_data, mm_kwargs, tok_kwargs
-            )
-
-        # Use openbmb MiniCPMOProcessor for combined audio+image processing.
-        # It inserts audio placeholders into the prompt before tokenization.
-        hf_processor = self.info.get_hf_processor(**mm_kwargs)
-        images = mm_data.get("images")
-
-        result = hf_processor(
-            text=prompt,
-            images=images,
-            audios=[a for a in audios if isinstance(a, np.ndarray)],
-            sampling_rate=16000,
-            return_tensors="pt",
-            stream_input=False,
-        )
-
-        # Rename to match thinker embed_multimodal kwargs
-        if "audio_features" in result and len(result["audio_features"]) > 0:
-            result["input_audio_features"] = result.pop("audio_features")
-        result.pop("audio_feature_lens", None)
-
-        return result
-
-
 @MULTIMODAL_REGISTRY.register_processor(
-    MiniCPMOMultiModalProcessor,
-    info=MiniCPMOProcessingInfo,
+    MiniCPMVMultiModalProcessor,
+    info=MiniCPMVProcessingInfo,
     dummy_inputs=MiniCPMVDummyInputsBuilder,
 )
 class MiniCPMOForConditionalGeneration(
