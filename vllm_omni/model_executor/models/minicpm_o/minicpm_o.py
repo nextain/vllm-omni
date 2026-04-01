@@ -59,12 +59,28 @@ class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
 
 
 class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
-    """Extends MiniCPMV processor to handle audio input.
+    """Extends MiniCPMV processor to handle audio + image/video input.
 
-    When audio is present, delegates to openbmb's MiniCPMOProcessor which
-    handles audio placeholder insertion + Whisper feature extraction together.
-    Without audio, falls back to parent MiniCPMV image/video processing.
+    Audio: openbmb MiniCPMOProcessor (placeholder insertion + mel features).
+    Image/Video: parent MiniCPMV processor.
+    Registers audio fields via _get_mm_fields_config for vllm pipeline.
     """
+
+    def _get_mm_fields_config(
+        self,
+        hf_inputs: "BatchFeature",
+        hf_processor_mm_kwargs: Mapping[str, object],
+    ) -> Mapping[str, "MultiModalFieldConfig"]:
+        from vllm.multimodal.processing.processor import MultiModalFieldConfig
+
+        fields = dict(
+            super()._get_mm_fields_config(hf_inputs, hf_processor_mm_kwargs)
+        )
+        if "input_audio_features" in hf_inputs:
+            fields["input_audio_features"] = MultiModalFieldConfig.batched(
+                "audio"
+            )
+        return fields
 
     def _call_hf_processor(
         self,
@@ -73,20 +89,18 @@ class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
         mm_kwargs: Mapping[str, object],
         tok_kwargs: Mapping[str, object],
     ) -> "BatchFeature":
+        import numpy as np
+
         mm_data = dict(mm_data)
         audios = mm_data.pop("audios", None)
 
         if not audios:
-            # No audio — use parent MiniCPMV processor for image/video
             return super()._call_hf_processor(
                 prompt, mm_data, mm_kwargs, tok_kwargs
             )
 
-        # Audio present — use openbmb MiniCPMOProcessor directly.
-        # It handles audio placeholders + tokenization + feature extraction
-        # in a single __call__, which is required for correct prompt alignment.
-        import numpy as np
-
+        # Use openbmb MiniCPMOProcessor for combined audio+image processing.
+        # It inserts audio placeholders into the prompt before tokenization.
         hf_processor = self.info.get_hf_processor(**mm_kwargs)
         images = mm_data.get("images")
 
@@ -99,11 +113,10 @@ class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
             stream_input=False,
         )
 
-        # Rename openbmb's output keys to match thinker's embed_multimodal kwargs
+        # Rename to match thinker embed_multimodal kwargs
         if "audio_features" in result and len(result["audio_features"]) > 0:
             result["input_audio_features"] = result.pop("audio_features")
-        if "audio_feature_lens" in result:
-            result.pop("audio_feature_lens", None)
+        result.pop("audio_feature_lens", None)
 
         return result
 
