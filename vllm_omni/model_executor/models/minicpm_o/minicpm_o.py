@@ -59,10 +59,11 @@ class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
 
 
 class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
-    """Extends MiniCPMV processor to handle audio input via Whisper features.
+    """Extends MiniCPMV processor to handle audio input.
 
-    Audio flow: audio_url → resample to 16kHz → mel spectrogram (via openbmb
-    MiniCPMAAudioProcessor) → input_audio_features kwarg → thinker Whisper encoder.
+    When audio is present, delegates to openbmb's MiniCPMOProcessor which
+    handles audio placeholder insertion + Whisper feature extraction together.
+    Without audio, falls back to parent MiniCPMV image/video processing.
     """
 
     def _call_hf_processor(
@@ -72,33 +73,37 @@ class MiniCPMOMultiModalProcessor(MiniCPMVMultiModalProcessor):
         mm_kwargs: Mapping[str, object],
         tok_kwargs: Mapping[str, object],
     ) -> "BatchFeature":
-        import numpy as np
-        from transformers import BatchFeature
-
         mm_data = dict(mm_data)
         audios = mm_data.pop("audios", None)
 
-        # Process image/video via parent MiniCPMV processor
-        result = super()._call_hf_processor(prompt, mm_data, mm_kwargs, tok_kwargs)
+        if not audios:
+            # No audio — use parent MiniCPMV processor for image/video
+            return super()._call_hf_processor(
+                prompt, mm_data, mm_kwargs, tok_kwargs
+            )
 
-        # Process audio via openbmb's MiniCPMAAudioProcessor
-        if audios:
-            hf_processor = self.info.get_hf_processor(**mm_kwargs)
-            audio_processor = hf_processor.audio_processor
-            audio_features_list = []
-            for audio in audios:
-                if isinstance(audio, np.ndarray):
-                    features = audio_processor(
-                        audio,
-                        sampling_rate=16000,
-                        return_tensors="pt",
-                    )
-                    audio_features_list.append(
-                        features["input_features"].squeeze(0)
-                    )
-            if audio_features_list:
-                import torch
-                result["input_audio_features"] = audio_features_list
+        # Audio present — use openbmb MiniCPMOProcessor directly.
+        # It handles audio placeholders + tokenization + feature extraction
+        # in a single __call__, which is required for correct prompt alignment.
+        import numpy as np
+
+        hf_processor = self.info.get_hf_processor(**mm_kwargs)
+        images = mm_data.get("images")
+
+        result = hf_processor(
+            text=prompt,
+            images=images,
+            audios=[a for a in audios if isinstance(a, np.ndarray)],
+            sampling_rate=16000,
+            return_tensors="pt",
+            stream_input=False,
+        )
+
+        # Rename openbmb's output keys to match thinker's embed_multimodal kwargs
+        if "audio_features" in result and len(result["audio_features"]) > 0:
+            result["input_audio_features"] = result.pop("audio_features")
+        if "audio_feature_lens" in result:
+            result.pop("audio_feature_lens", None)
 
         return result
 
