@@ -39,6 +39,12 @@ class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
         limits = dict(super().get_supported_mm_limits())
         limits["audio"] = None  # Allow audio input
         return limits
+
+    def get_data_parser(self):
+        from vllm.multimodal.parse import MultiModalDataParser
+        return MultiModalDataParser(
+            target_sr=16000,  # Whisper encoder expects 16kHz
+        )
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import IntermediateTensors
