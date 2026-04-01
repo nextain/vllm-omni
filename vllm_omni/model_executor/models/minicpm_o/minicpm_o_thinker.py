@@ -535,67 +535,89 @@ class MiniCPMOThinkerForConditionalGeneration(
     def embed_multimodal(self, **kwargs: object) -> MultiModalEmbeddings:
         """Process vision and audio inputs into embeddings.
 
-        Reuses vllm MiniCPMV's _parse_and_validate_multimodal_inputs (inherited
-        via @MULTIMODAL_REGISTRY processor) for correct dummy-data handling,
-        then delegates vision to get_vision_hidden_states (zero-pad pattern).
+        Delegates to vllm's MiniCPMO4_5 parsing + processing pattern:
+        _parse_and_validate_multimodal_inputs → _process_multimodal_inputs.
+        This ensures compatibility with MiniCPMOMultiModalProcessor's output.
         """
-        from vllm.model_executor.models.minicpmv import flatten_bn
+        from vllm.model_executor.models.minicpmo import (
+            MiniCPMOAudioEmbeddingInputs,
+            MiniCPMOAudioFeatureInputs,
+        )
+        from vllm.model_executor.models.minicpmv import (
+            MiniCPMVImageEmbeddingInputs,
+            MiniCPMVImagePixelInputs,
+            flatten_bn,
+        )
 
+        # Parse multimodal inputs (same as vllm MiniCPMO4_5)
+        modalities: dict = {}
+        for input_key in kwargs:
+            if input_key in ("pixel_values", "image_embeds") and "images" not in modalities:
+                pixel_values = kwargs.get("pixel_values")
+                image_embeds = kwargs.get("image_embeds")
+                if image_embeds is not None:
+                    modalities["images"] = MiniCPMVImageEmbeddingInputs(
+                        type="image_embeds", image_embeds=image_embeds,
+                    )
+                elif pixel_values is not None:
+                    tgt_sizes = kwargs.get("tgt_sizes")
+                    num_slices_flat = torch.tensor([len(ps) for ps in pixel_values])
+                    modalities["images"] = MiniCPMVImagePixelInputs(
+                        type="pixel_values",
+                        pixel_values=flatten_bn(pixel_values),
+                        tgt_sizes=flatten_bn(tgt_sizes, concat=True),
+                        num_slices=num_slices_flat,
+                    )
+            if input_key in ("audio_features", "audio_embeds") and "audios" not in modalities:
+                audio_embeds = kwargs.get("audio_embeds")
+                audio_features = kwargs.get("audio_features")
+                if audio_embeds is not None:
+                    modalities["audios"] = MiniCPMOAudioEmbeddingInputs(
+                        type="audio_embeds", audio_embeds=audio_embeds,
+                    )
+                elif audio_features is not None:
+                    modalities["audios"] = MiniCPMOAudioFeatureInputs(
+                        type="audio_features",
+                        audio_features=audio_features,
+                        audio_feature_lens=kwargs.get("audio_feature_lens"),
+                    )
+
+        if not modalities:
+            return []
+
+        # Process each modality
         multimodal_embeddings: tuple[torch.Tensor, ...] = ()
 
-        # Images — parse via flatten_bn (handles variable-size slices)
-        pixel_values = kwargs.get("pixel_values")
-        if pixel_values is not None:
-            tgt_sizes = kwargs.get("tgt_sizes")
-            # flatten_bn: list[Tensor[num_slices, C, H, W]] → list[Tensor[C, H, W]]
-            num_slices_flat = torch.tensor([len(ps) for ps in pixel_values])
-            pixel_values_flat = flatten_bn(pixel_values)
-            tgt_sizes_flat = flatten_bn(tgt_sizes, concat=True)
+        for modality in modalities:
+            if modality == "images":
+                image_input = modalities["images"]
+                if image_input["type"] == "image_embeds":
+                    multimodal_embeddings += tuple(image_input["image_embeds"])
+                else:
+                    vision_embeds = self.get_vision_hidden_states(
+                        image_input["pixel_values"], image_input["tgt_sizes"]
+                    )
+                    num_slices = image_input["num_slices"]
+                    per_image = [
+                        e.flatten(0, 1)
+                        for e in vision_embeds.split(num_slices.tolist())
+                    ]
+                    multimodal_embeddings += tuple(per_image)
 
-            vision_embeds = self.get_vision_hidden_states(
-                pixel_values_flat, tgt_sizes_flat
-            )
-            # Split back per-image, flatten (query_num * num_slices) per image
-            per_image = [
-                e.flatten(0, 1)
-                for e in vision_embeds.split(num_slices_flat.tolist())
-            ]
-            multimodal_embeddings += tuple(per_image)
-
-        # Videos — same as images
-        video_pixel_values = kwargs.get("video_pixel_values")
-        if video_pixel_values is not None:
-            video_tgt_sizes = kwargs.get("video_tgt_sizes")
-            num_slices_flat = torch.tensor([len(ps) for ps in video_pixel_values])
-            pixel_values_flat = flatten_bn(video_pixel_values)
-            tgt_sizes_flat = flatten_bn(video_tgt_sizes, concat=True)
-
-            vision_embeds = self.get_vision_hidden_states(
-                pixel_values_flat, tgt_sizes_flat
-            )
-            per_video = [
-                e.flatten(0, 1)
-                for e in vision_embeds.split(num_slices_flat.tolist())
-            ]
-            multimodal_embeddings += tuple(per_video)
-
-        # Audio — vllm's MiniCPMOMultiModalProcessor produces "audio_features"
-        # (mel spectrograms) + "audio_feature_lens". Process via Whisper encoder
-        # following vllm's MiniCPMOBaseModel.get_audio_hidden_states pattern.
-        audio_features = kwargs.get("audio_features")
-        audio_embeds_direct = kwargs.get("audio_embeds")
-        if audio_embeds_direct is not None:
-            # Pre-computed embeddings (from cache or dummy)
-            if isinstance(audio_embeds_direct, (list, tuple)):
-                multimodal_embeddings += tuple(audio_embeds_direct)
-            else:
-                multimodal_embeddings += tuple(audio_embeds_direct.unbind(0))
-        elif audio_features is not None:
-            audio_feature_lens = kwargs.get("audio_feature_lens")
-            audio_embeds = self.audio_encoder(
-                audio_features, audio_feature_lens
-            )
-            multimodal_embeddings += tuple(audio_embeds)
+            if modality == "audios":
+                audio_input = modalities["audios"]
+                if audio_input["type"] == "audio_embeds":
+                    embeds = audio_input["audio_embeds"]
+                    if isinstance(embeds, (list, tuple)):
+                        multimodal_embeddings += tuple(embeds)
+                    else:
+                        multimodal_embeddings += tuple(embeds.unbind(0))
+                else:
+                    audio_embeds = self.audio_encoder(
+                        audio_input["audio_features"],
+                        audio_input.get("audio_feature_lens"),
+                    )
+                    multimodal_embeddings += tuple(audio_embeds)
 
         return list(multimodal_embeddings)
 
