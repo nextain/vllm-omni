@@ -30,6 +30,15 @@ from vllm.model_executor.models.minicpmv import (
     MiniCPMVMultiModalProcessor,
     MiniCPMVProcessingInfo,
 )
+
+
+class MiniCPMOProcessingInfo(MiniCPMVProcessingInfo):
+    """Extends MiniCPMV to support audio input via Whisper encoder."""
+
+    def get_supported_mm_limits(self):
+        limits = dict(super().get_supported_mm_limits())
+        limits["audio"] = None  # Allow audio input
+        return limits
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import IntermediateTensors
@@ -47,7 +56,7 @@ logger = init_logger(__name__)
 
 @MULTIMODAL_REGISTRY.register_processor(
     MiniCPMVMultiModalProcessor,
-    info=MiniCPMVProcessingInfo,
+    info=MiniCPMOProcessingInfo,
     dummy_inputs=MiniCPMVDummyInputsBuilder,
 )
 class MiniCPMOForConditionalGeneration(
