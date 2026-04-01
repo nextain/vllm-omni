@@ -185,19 +185,16 @@ class MiniCPMOCode2Wav(nn.Module):
 
         device = codes.device
 
-        # Lazy move from CPU to the correct GPU on first forward call
-        try:
-            flow_device = next(flow.parameters()).device
-        except StopIteration:
-            flow_device = next(flow.buffers()).device
+        # Lazy move from CPU to the correct GPU on first forward call.
+        # CosyVoice2 flow is loaded from external YAML, not nn.Module
+        # registration — check device via parameters or buffers.
+        params = list(flow.parameters())
+        flow_device = params[0].device if params else next(flow.buffers()).device
         if flow_device != device:
             flow.to(device)
             hift.to(device)
 
-        try:
-            dtype = next(flow.parameters()).dtype
-        except StopIteration:
-            dtype = torch.float32
+        dtype = params[0].dtype if params else torch.float32
         spk_dim = self.__dict__["_spk_embed_dim"]
 
         # CosyVoice2 flow.inference() requires batch_size == 1
