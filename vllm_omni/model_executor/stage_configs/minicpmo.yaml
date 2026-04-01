@@ -58,7 +58,7 @@ stage_args:
       enable_prefix_caching: false
       max_num_batched_tokens: 32768
       distributed_executor_backend: "mp"
-      limit_mm_per_prompt: {image: 0, video: 0}
+      limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [0]
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
     default_sampling_params:
@@ -88,7 +88,7 @@ stage_args:
       gpu_memory_utilization: 0.1
       distributed_executor_backend: "mp"
       max_num_batched_tokens: 1000000
-      limit_mm_per_prompt: {image: 0, video: 0}
+      limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [1]
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
     final_output: true
