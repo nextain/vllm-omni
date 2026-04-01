@@ -279,30 +279,67 @@ class MiniCPMOAudioEncoder(nn.Module):
             hidden_size=llm_hidden_size,
         )
 
-    def forward(self, input_features: list[torch.Tensor]) -> list[torch.Tensor]:
-        """
+    def forward(
+        self,
+        audio_features: torch.Tensor | list[torch.Tensor],
+        audio_feature_lens: torch.Tensor | list[torch.Tensor] | None = None,
+    ) -> list[torch.Tensor]:
+        """Process mel spectrograms through Whisper encoder + projection.
+
+        Follows vllm MiniCPMOBaseModel.get_audio_hidden_states pattern.
+
         Args:
-            input_features: List of mel-spectrogram tensors [num_mels, T]
+            audio_features: [B, num_mels, frames] mel spectrograms
+            audio_feature_lens: [B] or list of tensors — valid frame counts
 
         Returns:
-            List of projected audio embeddings [T', llm_hidden_size]
+            List of projected audio embeddings per sample [T', llm_hidden]
         """
-        hidden = self.encoder(input_features)  # [B, T, d_model]
+        # Handle list input (variable-length audios → zero-pad)
+        if isinstance(audio_features, (list, tuple)):
+            B = len(audio_features)
+            C = audio_features[0].shape[-2]
+            L = max(item.shape[-1] for item in audio_features)
+            device = audio_features[0].device
+            dtype = audio_features[0].dtype
+            wavforms = torch.zeros((B, C, L), dtype=dtype, device=device)
+            for i, item in enumerate(audio_features):
+                wavforms[i, ..., : item.shape[-1]] = item
+        else:
+            wavforms = audio_features
+
+        hidden = self.encoder(wavforms)  # [B, T, d_model]
         projected = self.projection(hidden)
 
         # Average pooling with audio_pool_step
-        if self.audio_pool_step > 1:
+        pool = self.audio_pool_step
+        if pool > 1:
             T = projected.shape[1]
-            padded_T = (T + self.audio_pool_step - 1) // self.audio_pool_step * self.audio_pool_step
+            padded_T = (T + pool - 1) // pool * pool
             if padded_T > T:
-                projected = torch.nn.functional.pad(projected, (0, 0, 0, padded_T - T))
+                projected = torch.nn.functional.pad(
+                    projected, (0, 0, 0, padded_T - T)
+                )
             projected = projected.reshape(
-                projected.shape[0], -1, self.audio_pool_step, projected.shape[-1]
-            )
-            projected = projected.mean(dim=2)
+                projected.shape[0], -1, pool, projected.shape[-1]
+            ).mean(dim=2)
 
-        # Return as list (one tensor per batch element)
-        return list(projected.unbind(dim=0))
+        # Return per-sample embeddings (trimmed by feature_lens if provided)
+        results: list[torch.Tensor] = []
+        if audio_feature_lens is not None:
+            if isinstance(audio_feature_lens, (list, tuple)):
+                lens = torch.hstack(audio_feature_lens)
+            else:
+                lens = audio_feature_lens
+            for i in range(projected.shape[0]):
+                # Compute output length after pooling
+                feat_len = int(lens[i].item()) if i < len(lens) else projected.shape[1]
+                out_len = (((feat_len - 1) // 2 + 1) - pool) // pool + 1
+                results.append(projected[i, :out_len])
+        else:
+            results = list(projected.unbind(dim=0))
+
+        return results
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:
         """Load weights, stacking WhisperEncoder q/k/v into qkv_proj."""
@@ -542,11 +579,22 @@ class MiniCPMOThinkerForConditionalGeneration(
             ]
             multimodal_embeddings += tuple(per_video)
 
-        # Audio
-        # vllm's MiniCPMOMultiModalProcessor produces "audio_features" key
+        # Audio — vllm's MiniCPMOMultiModalProcessor produces "audio_features"
+        # (mel spectrograms) + "audio_feature_lens". Process via Whisper encoder
+        # following vllm's MiniCPMOBaseModel.get_audio_hidden_states pattern.
         audio_features = kwargs.get("audio_features")
-        if audio_features is not None:
-            audio_embeds = self.audio_encoder(audio_features)
+        audio_embeds_direct = kwargs.get("audio_embeds")
+        if audio_embeds_direct is not None:
+            # Pre-computed embeddings (from cache or dummy)
+            if isinstance(audio_embeds_direct, (list, tuple)):
+                multimodal_embeddings += tuple(audio_embeds_direct)
+            else:
+                multimodal_embeddings += tuple(audio_embeds_direct.unbind(0))
+        elif audio_features is not None:
+            audio_feature_lens = kwargs.get("audio_feature_lens")
+            audio_embeds = self.audio_encoder(
+                audio_features, audio_feature_lens
+            )
             multimodal_embeddings += tuple(audio_embeds)
 
         return list(multimodal_embeddings)
