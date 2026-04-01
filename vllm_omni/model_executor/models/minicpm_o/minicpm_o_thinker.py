@@ -543,9 +543,10 @@ class MiniCPMOThinkerForConditionalGeneration(
             multimodal_embeddings += tuple(per_video)
 
         # Audio
-        input_audio_features = kwargs.get("input_audio_features")
-        if input_audio_features is not None:
-            audio_embeds = self.audio_encoder(input_audio_features)
+        # vllm's MiniCPMOMultiModalProcessor produces "audio_features" key
+        audio_features = kwargs.get("audio_features")
+        if audio_features is not None:
+            audio_embeds = self.audio_encoder(audio_features)
             multimodal_embeddings += tuple(audio_embeds)
 
         return list(multimodal_embeddings)
