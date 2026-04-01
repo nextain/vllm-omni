@@ -145,9 +145,24 @@ Key fields:
 - `preserve_multimodal: true` — Stage 0 only (passes hidden states to Stage 1)
 - `limit_mm_per_prompt: {image: 0, video: 0}` — Stage 1, 2 (no multimodal encoders)
 
+## Supported Modalities
+
+| Input | Supported | Notes |
+|-------|:---------:|-------|
+| Text | ✅ | Standard chat messages |
+| Image | ✅ | Via `image_url` in message content |
+| Audio | ✅ | Via `audio_url` — Whisper encoder processes input |
+| Video | ❌ | Disabled (SigLIP expects batched tensors) |
+
+| Output | Supported | Notes |
+|--------|:---------:|-------|
+| Text | ✅ | `modalities: ["text"]` |
+| Audio | ✅ | `modalities: ["audio"]` — full WAV in response |
+| Streaming audio | ❌ | `async_chunk: false` — full audio returned after generation |
+
 ## Known Limitations
 
 - **Voice cloning**: Not supported (empty speaker embedding)
 - **Video input**: Disabled (`limit_mm_per_prompt: {video: 0}`)
 - **Code2Wav batch_size=1**: CosyVoice2 API constraint
-- **Streaming audio**: Not yet supported (full audio returned after generation)
+- **Streaming audio**: Not yet (`async_chunk: false`); qwen3_omni has this feature
