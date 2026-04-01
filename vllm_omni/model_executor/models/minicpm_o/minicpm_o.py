@@ -192,7 +192,13 @@ class MiniCPMOForConditionalGeneration(
 
     @classmethod
     def get_placeholder_str(cls, modality: str, i: int) -> str | None:
-        # Placeholder strings are provided by MiniCPMVMultiModalProcessor.
+        # Must match MiniCPMOProcessingInfo.audio_pattern and vllm MiniCPMO4_5
+        if modality.startswith("image"):
+            return "(<image>./</image>)"
+        if modality.startswith("video"):
+            return "(<video>./</video>)"
+        if modality.startswith("audio"):
+            return "(<audio>./</audio>)"
         return None
 
     def embed_input_ids(
