@@ -123,10 +123,23 @@ def thinker2talker(
         tts_hidden = tts_hidden[:num_tts_tokens]
 
         if num_tts_tokens == 0:
-            # Fallback: no TTS markers found, use all tokens
-            num_tts_tokens = min(token_len, hidden_len)
-            tts_token_ids = full_token_ids[:num_tts_tokens]
-            tts_hidden = thinker_hidden_states[:num_tts_tokens]
+            # Fallback: no TTS markers found — use only the GENERATED tokens
+            # (not the prompt), since those are the actual response.
+            # thinker_hidden_states covers the full sequence (prompt + generated).
+            prompt_len = len(thinker_output.prompt_token_ids)
+            gen_len = len(output.token_ids)
+            # Slice hidden states to the generated portion only
+            gen_start = min(prompt_len, hidden_len)
+            gen_end = min(prompt_len + gen_len, hidden_len)
+            if gen_end > gen_start:
+                tts_token_ids = list(output.token_ids[: gen_end - gen_start])
+                tts_hidden = thinker_hidden_states[gen_start:gen_end]
+                num_tts_tokens = len(tts_token_ids)
+            else:
+                # Last resort: use all tokens
+                num_tts_tokens = min(token_len, hidden_len)
+                tts_token_ids = full_token_ids[:num_tts_tokens]
+                tts_hidden = thinker_hidden_states[:num_tts_tokens]
 
         info: dict[str, Any] = {
             "thinker_token_ids": torch.tensor(
