@@ -25,8 +25,9 @@
 | 항목 | 상태 | 비고 |
 |------|:----:|------|
 | 모델 코드 (thinker/talker/code2wav) | ✅ | 2x RTX 3090 E2E 통과 (텍스트+오디오 출력) |
-| stage_configs YAML (minicpmo.yaml) | ✅ | 2x RTX 3090 검증 완료 |
-| stage_configs YAML (minicpmo_24gb.yaml) | ⚠️ | 24GB 단일 GPU, curl 테스트만 |
+| stage_configs YAML (minicpmo.yaml) | ✅ | 2x RTX 3090 검증, 코드 리뷰 Pass 1-6 완료 |
+| stage_configs YAML (minicpmo_24gb.yaml) | ⚠️ | 24GB 단일 GPU, chat_template_kwargs 추가됨 |
+| stage_input_processors/minicpm_o.py | ⚠️ | 코드 리뷰 Pass 1-6 완료, TTS conditioning 미해결 |
 | registry | ✅ | 단순 추가 |
 | audio input (MiniCPMO processor) | ⚠️ | 2-GPU에서 미검증 (text→audio만 확인) |
 | embed_multimodal | ✅ | max_num_batched_tokens 조정으로 profile_run 통과 |
