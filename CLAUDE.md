@@ -5,10 +5,10 @@ MiniCPM-o 4.5 omni model support contribution.
 
 ## Mandatory Reads
 
-1. `.agents/context/upstream-basics.md` — vllm-omni 프레임워크 기본 이해
-2. `.agents/context/stage-configs-guide.md` — stage config 완전 가이드
-3. `.agents/context/multi-gpu-guide.md` — multi-GPU 배포 가이드
-4. `.agents/context/our-changes.md` — 우리가 수정한 것과 현재 상태
+1. `.agents/context/upstream-basics.md` — vllm-omni 프레임워크 기본 이해 (아키텍처, stage config, multi-GPU)
+2. `.agents/context/our-changes.md` — 우리가 수정한 것과 현재 상태
+3. `docs/configuration/stage_configs.md` — upstream 공식 stage config 문서
+4. `docs/configuration/gpu_memory_utilization.md` — upstream GPU 메모리 가이드
 
 ## 핵심 원칙
 
