@@ -20,8 +20,6 @@ import multiprocessing as mp
 import os
 import sys
 
-mp.set_start_method("spawn", force=True)
-
 
 def _worker_check_device(device_str: str, result_queue: mp.Queue) -> None:
     """Worker that sets CUDA_VISIBLE_DEVICES and reports device info."""
@@ -41,7 +39,7 @@ def _worker_check_device(device_str: str, result_queue: mp.Queue) -> None:
             results["current_device"] = torch.cuda.current_device()
             props = torch.cuda.get_device_properties(0)
             results["device_name"] = props.name
-            results["device_total_mem_gb"] = round(props.total_mem / 1e9, 2)
+            results["device_total_mem_gb"] = round(props.total_memory / 1e9, 2)
 
             # Allocate a small tensor to mark presence on GPU
             t = torch.zeros(1024, device="cuda:0")
@@ -289,6 +287,7 @@ def test_nested_spawn():
 
 
 if __name__ == "__main__":
+    mp.set_start_method("spawn", force=True)
     test_detect_pid_host()
     test_device_isolation()
     test_nested_spawn()
