@@ -41,11 +41,10 @@ def _worker_check_device(device_str: str, result_queue: mp.Queue) -> None:
             results["device_name"] = props.name
             results["device_total_mem_gb"] = round(props.total_memory / 1e9, 2)
 
-            # Allocate a small tensor to mark presence on GPU
-            t = torch.zeros(1024, device="cuda:0")
+            # Allocate 4MB tensor to ensure NVML can detect the process
+            t = torch.zeros(2**20, device="cuda:0")  # 4MB (1M float32)
             results["alloc_ok"] = True
-            del t
-            torch.cuda.empty_cache()
+            results["torch_mem_mb"] = round(torch.cuda.memory_allocated(0) / 1e6, 1)
         else:
             results["error"] = "No CUDA devices visible"
     except Exception as e:
@@ -150,6 +149,25 @@ def test_device_isolation():
             print(f"  ERROR: {results['error']}")
         if "nvml_error" in results:
             print(f"  NVML ERROR: {results['nvml_error']}")
+
+        # Verdict
+        if results.get("device_count") == 1 and "nvml_per_gpu" in results:
+            on_correct = any(
+                g["gpu"] == target_gpu and g["my_pid_mem_mb"] > 0
+                for g in results["nvml_per_gpu"]
+            )
+            on_wrong = any(
+                g["gpu"] != target_gpu and g["my_pid_mem_mb"] > 0
+                for g in results["nvml_per_gpu"]
+            )
+            if on_correct and not on_wrong:
+                print(f"  ✅ PASS: Correctly isolated to GPU {target_gpu}")
+            elif on_wrong:
+                print(f"  ❌ FAIL: Memory on wrong GPU!")
+            else:
+                print(f"  ⚠ INCONCLUSIVE: NVML did not detect process memory")
+        elif results.get("device_count") != 1:
+            print(f"  ❌ FAIL: device_count={results.get('device_count')}, expected 1")
 
 
 def test_detect_pid_host():
