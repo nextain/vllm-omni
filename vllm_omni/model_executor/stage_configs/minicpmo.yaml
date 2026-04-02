@@ -99,7 +99,7 @@ stage_args:
       engine_output_type: audio
       gpu_memory_utilization: 0.02
       distributed_executor_backend: "mp"
-      max_num_batched_tokens: 1000000
+      max_num_batched_tokens: 1000
       tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [1]

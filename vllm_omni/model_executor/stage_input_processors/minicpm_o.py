@@ -79,11 +79,17 @@ def thinker2talker(
     # Fall back to MiniCPM-o 4.5 defaults if config doesn't have the fields
     # (e.g. when HF config.json is loaded via --trust-remote-code from upstream)
     thinker_stage = stage_list[engine_input_source[0]]
-    tts_config = thinker_stage.vllm_config.model_config.hf_config.tts_config
-    tts_bos_id = getattr(tts_config, "tts_bos_token_id", 151703)
-    tts_eos_id = getattr(tts_config, "tts_eos_token_id", 151704)
+    hf_config = thinker_stage.vllm_config.model_config.hf_config
+    tts_config = getattr(hf_config, "tts_config", None)
+    tts_bos_id = getattr(tts_config, "tts_bos_token_id", 151703) if tts_config else 151703
+    tts_eos_id = getattr(tts_config, "tts_eos_token_id", 151704) if tts_config else 151704
 
     for thinker_output in thinker_outputs:
+        if not thinker_output.outputs:
+            raise RuntimeError(
+                "thinker stage produced empty outputs. Check that max_tokens > 0 "
+                "and the model generated at least one token."
+            )
         output = thinker_output.outputs[0]
 
         thinker_hidden_states = output.multimodal_output.get("thinker_hidden_states")
@@ -141,6 +147,11 @@ def thinker2talker(
                 tts_token_ids = full_token_ids[:num_tts_tokens]
                 tts_hidden = thinker_hidden_states[:num_tts_tokens]
 
+        # Keys match MiniCPM-o's talker_preprocess expectations:
+        #   thinker_token_ids  → emb_text(ids) for conditioning
+        #   thinker_hidden_states → semantic_projection input
+        # Note: differs from qwen3 (thinker_sequences/thinker_prefill_embeddings)
+        # and qwen2.5 (thinker_result/prompt_embeds) — model-specific keys.
         info: dict[str, Any] = {
             "thinker_token_ids": torch.tensor(
                 tts_token_ids, dtype=torch.long, device=device,
@@ -186,10 +197,17 @@ def talker2code2wav(
     code2wav_inputs: list[OmniTokensPrompt] = []
 
     for talker_output in talker_outputs:
+        if not talker_output.outputs:
+            raise RuntimeError(
+                "talker stage produced empty outputs. Check that max_tokens > 0 "
+                "and the model generated at least one codec token."
+            )
         output = talker_output.outputs[0]
-        # vllm includes stop_token_ids in output.token_ids, so strip the
-        # trailing stop token before passing to Code2Wav.  This matches
-        # the qwen3_omni pattern: seq_len = len(output.token_ids) - 1.
+        # MiniCPM-o uses num_vq=1 (single RVQ layer), so codec tokens are
+        # directly in output.token_ids (flat 1D).  This differs from
+        # qwen3_omni which extracts from multimodal_output["code_predictor_codes"]
+        # because qwen3 uses multi-layer RVQ requiring transpose+reshape.
+        # Strip trailing stop token (vllm includes stop_token_ids in output).
         codec_codes = list(output.token_ids[:-1]) if output.token_ids else []
         code2wav_inputs.append(
             OmniTokensPrompt(
