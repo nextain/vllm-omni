@@ -1,7 +1,6 @@
 # MiniCPM-o 4.5 — single GPU <=24GB reference config (e.g. RTX 3090)
-#
 # All 3 stages on device "0". Memory-constrained: enforce_eager=true,
-# reduced max_model_len/batch sizes, tight gpu_memory_utilization split.
+# reduced max_model_len, tight gpu_memory_utilization split.
 # For larger GPUs (48GB+), use minicpmo.yaml instead.
 
 async_chunk: false
@@ -9,11 +8,13 @@ stage_args:
   - stage_id: 0
     stage_type: llm
     runtime:
+      process: true
       devices: "0"
       max_batch_size: 4
     engine_args:
       model_stage: thinker
       model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 2
       worker_type: ar
       scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
       gpu_memory_utilization: 0.75
@@ -22,9 +23,8 @@ stage_args:
       engine_output_type: latent
       distributed_executor_backend: "mp"
       enable_prefix_caching: false
-      max_num_batched_tokens: 1400
-      max_model_len: 1400
-      max_num_seqs: 2
+      max_num_batched_tokens: 1600
+      max_model_len: 1600
       limit_mm_per_prompt: {video: 0}
       tensor_parallel_size: 1
     final_output: true
@@ -43,11 +43,13 @@ stage_args:
   - stage_id: 1
     stage_type: llm
     runtime:
+      process: true
       devices: "0"
       max_batch_size: 4
     engine_args:
       model_stage: talker
       model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 2
       worker_type: ar
       scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
       hf_config_name: tts_config
@@ -56,10 +58,10 @@ stage_args:
       trust_remote_code: true
       engine_output_type: latent
       enable_prefix_caching: false
-      max_num_batched_tokens: 2048
-      max_model_len: 2048
-      max_num_seqs: 2
+      max_num_batched_tokens: 1600
+      max_model_len: 1600
       distributed_executor_backend: "mp"
+      tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [0]
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
@@ -75,11 +77,13 @@ stage_args:
   - stage_id: 2
     stage_type: llm
     runtime:
+      process: true
       devices: "0"
       max_batch_size: 4
     engine_args:
       model_stage: code2wav
       model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 1
       worker_type: generation
       scheduler_cls: vllm_omni.core.sched.omni_generation_scheduler.OmniGenerationScheduler
       enforce_eager: true
@@ -90,7 +94,7 @@ stage_args:
       gpu_memory_utilization: 0.02
       distributed_executor_backend: "mp"
       max_num_batched_tokens: 1000
-      max_num_seqs: 1
+      tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [1]
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
@@ -104,3 +108,16 @@ stage_args:
       seed: 42
       detokenize: true
       repetition_penalty: 1.1
+
+runtime:
+  enabled: true
+  defaults:
+    window_size: -1
+    max_inflight: 1
+  edges:
+    - from: 0
+      to: 1
+      window_size: -1
+    - from: 1
+      to: 2
+      window_size: -1
