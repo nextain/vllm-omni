@@ -238,10 +238,18 @@ class Monitor:
 # ---------------------------------------------------------------------------
 # Word-level accuracy metric
 # ---------------------------------------------------------------------------
+def _normalize(text: str) -> list[str]:
+    """Strip punctuation and normalize for word comparison."""
+    import re
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", "", text)  # Remove punctuation
+    return text.split()
+
+
 def word_accuracy(original: str, transcript: str) -> float:
-    """Fraction of original words found in transcript (case-insensitive)."""
-    orig_words = set(original.lower().split())
-    trans_words = set(transcript.lower().split())
+    """Fraction of original words found in transcript (case-insensitive, punctuation-stripped)."""
+    orig_words = set(_normalize(original))
+    trans_words = set(_normalize(transcript))
     if not orig_words:
         return 1.0
     return len(orig_words & trans_words) / len(orig_words)
