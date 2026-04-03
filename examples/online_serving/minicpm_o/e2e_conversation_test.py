@@ -165,32 +165,51 @@ class OmniSpeaker(Speaker):
         self._pending_audio_b64: str | None = None
 
     def generate_text(self, user_message: str) -> tuple[str, float]:
-        """Generate text + audio via omni API. Audio cached for synthesize()."""
-        import base64
+        """Generate text + audio via streaming omni API. Audio cached for synthesize().
 
+        Text tokens arrive as modality="text" chunks; the final audio chunk
+        arrives as modality="audio" with choices[0].delta.content = base64 WAV.
+        self._last_ttfp is set to the time of the first text token (true TTFP).
+        """
         self.history.append({"role": "user", "content": user_message})
         messages = [{"role": "system", "content": self.system_prompt}] + self.history
 
         client = get_openai_client(self.api_base)
         t0 = time.perf_counter()
-        resp = client.chat.completions.create(
+        self._last_ttfp: float | None = None
+        self._pending_audio_b64 = None
+
+        stream = client.chat.completions.create(
             model=self.model,
             messages=messages,
             max_tokens=150,
             temperature=0.7,
+            stream=True,
         )
+
+        text_chunks: list[str] = []
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            modality = getattr(chunk, "modality", "text")
+            content = chunk.choices[0].delta.content
+            if not content:
+                continue
+            if modality == "audio":
+                # Final chunk: base64-encoded WAV from Code2Wav
+                self._pending_audio_b64 = content
+            else:
+                # Text token
+                if self._last_ttfp is None:
+                    self._last_ttfp = time.perf_counter() - t0
+                text_chunks.append(content)
+
         elapsed = time.perf_counter() - t0
+        if self._last_ttfp is None:
+            self._last_ttfp = elapsed
 
-        # Extract text (choice 0) and audio (choice 1)
-        text = resp.choices[0].message.content.strip()
+        text = "".join(text_chunks).strip()
         self.history.append({"role": "assistant", "content": text})
-
-        # Audio is in choices[1].message.audio.data (base64 WAV)
-        self._pending_audio_b64 = None
-        if len(resp.choices) > 1:
-            msg = resp.choices[1].message
-            if hasattr(msg, "audio") and msg.audio:
-                self._pending_audio_b64 = msg.audio.data
         return text, elapsed
 
     async def synthesize(self, text: str, output_path: str) -> float:

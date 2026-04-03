@@ -125,6 +125,7 @@ class TurnMetrics:
     stt_semantic_similarity: float  # Embedding-based similarity
     stt_avg_logprob: float
     response_time_s: float
+    ttfp_s: float  # Time To First (text) Packet — streaming latency
     wall_time_s: float
     text_length_chars: int
     text_length_words: int
@@ -247,7 +248,8 @@ class ConversationBenchmark:
             label = f"  Turn {i+1} [{role}]"
             print(f"{label}: thinking...", end=" ", flush=True)
             text, resp_time = speaker.generate_text(current_text)
-            print(f"({resp_time:.1f}s)")
+            ttfp = getattr(speaker, "_last_ttfp", None) or resp_time
+            print(f"({resp_time:.1f}s, TTFP={ttfp:.2f}s)")
 
             # Synthesize
             audio_path = str(scenario_dir / f"turn_{i+1:03d}_{role}.wav")
@@ -274,6 +276,7 @@ class ConversationBenchmark:
                 stt_semantic_similarity=semantic_sim,
                 stt_avg_logprob=stt_logprob,
                 response_time_s=resp_time,
+                ttfp_s=ttfp,
                 wall_time_s=time.perf_counter() - t_start,
                 text_length_chars=len(text),
                 text_length_words=len(text.split()),
@@ -287,6 +290,7 @@ class ConversationBenchmark:
             "n_turns": len(turns),
             "n_test_turns": len(test_turns),
             "avg_response_time_s": float(np.mean([t.response_time_s for t in test_turns])) if test_turns else 0,
+            "avg_ttfp_s": float(np.mean([t.ttfp_s for t in test_turns])) if test_turns else 0,
             "avg_stt_accuracy": float(np.mean([t.stt_accuracy for t in test_turns])) if test_turns else 0,
             "avg_stt_semantic_similarity": float(np.mean([t.stt_semantic_similarity for t in test_turns])) if test_turns else 0,
             "avg_text_length_words": float(np.mean([t.text_length_words for t in test_turns])) if test_turns else 0,
@@ -317,6 +321,7 @@ class ConversationBenchmark:
             "scenarios_run": 0,
             "total_test_turns": 0,
             "avg_response_time_s": 0,
+            "avg_ttfp_s": 0,
             "avg_stt_accuracy": 0,
             "avg_stt_semantic_similarity": 0,
             "avg_text_length_words": 0,
@@ -344,6 +349,10 @@ class ConversationBenchmark:
         if total_test > 0:
             overall_metrics["avg_response_time_s"] = float(np.average(
                 [r.metrics["avg_response_time_s"] for r in results],
+                weights=test_counts,
+            ))
+            overall_metrics["avg_ttfp_s"] = float(np.average(
+                [r.metrics["avg_ttfp_s"] for r in results],
                 weights=test_counts,
             ))
             overall_metrics["avg_stt_accuracy"] = float(np.average(
@@ -385,6 +394,7 @@ class ConversationBenchmark:
         print(f"{'='*60}")
         print(f"  Scenarios:           {overall['scenarios_run']}")
         print(f"  Test turns:          {overall['total_test_turns']}")
+        print(f"  Avg TTFP:            {overall['avg_ttfp_s']:.2f}s")
         print(f"  Avg resp time:       {overall['avg_response_time_s']:.1f}s")
         print(f"  Avg STT CER:         {overall['avg_stt_accuracy']:.0%}")
         print(f"  Avg STT semantic sim: {overall['avg_stt_semantic_similarity']:.0%}")

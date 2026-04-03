@@ -376,26 +376,32 @@ def talker2code2wav_async_chunk(
     request_id = request.external_req_id
     finished = bool(is_finished or request.is_finished())
 
-    # Initialize per-request token storage if needed
+    # Initialize per-request token storage and last-seen index
     if not hasattr(transfer_manager, "code_prompt_token_ids"):
         transfer_manager.code_prompt_token_ids = {}
+    if not hasattr(transfer_manager, "_talker_token_cursor"):
+        transfer_manager._talker_token_cursor = {}
 
     if request_id not in transfer_manager.code_prompt_token_ids:
         transfer_manager.code_prompt_token_ids[request_id] = []
+        transfer_manager._talker_token_cursor[request_id] = 0
 
-    # Extract codec token from Talker output
-    if isinstance(pooling_output, dict):
-        token_ids = pooling_output.get("token_ids")
-        if token_ids is not None:
-            if isinstance(token_ids, torch.Tensor):
-                # MiniCPM-o: single codec token per position (num_vq=1)
-                # Skip stop token (6561)
-                tokens = token_ids.cpu().tolist()
-                tokens = [t for t in tokens if t != 6561]
-                transfer_manager.code_prompt_token_ids[request_id].extend(tokens)
-            elif isinstance(token_ids, list):
-                tokens = [t for t in token_ids if t != 6561]
-                transfer_manager.code_prompt_token_ids[request_id].extend(tokens)
+    # Extract newly generated codec tokens from request.output_token_ids.
+    # pooling_output["hidden"] contains raw hidden states, NOT token ids.
+    # The sampled codec tokens live in request.output_token_ids (cumulative).
+    # We read only the delta since the last call using a cursor.
+    try:
+        all_output_ids = list(request.output_token_ids)
+    except AttributeError:
+        all_output_ids = []
+
+    cursor = transfer_manager._talker_token_cursor[request_id]
+    new_tokens = all_output_ids[cursor:]
+    transfer_manager._talker_token_cursor[request_id] = len(all_output_ids)
+
+    # MiniCPM-o Talker stop token is 6561 — skip it
+    new_tokens = [t for t in new_tokens if t != 6561]
+    transfer_manager.code_prompt_token_ids[request_id].extend(new_tokens)
 
     # Get chunk config from stage config
     connector = getattr(transfer_manager, "connector", None)
