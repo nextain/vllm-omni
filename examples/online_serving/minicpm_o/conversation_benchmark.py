@@ -39,7 +39,14 @@ from e2e_conversation_test import (
     _normalize,
     get_openai_client,
     get_whisper_model,
-    word_accuracy,
+)
+
+# CJK-aware metrics for speech evaluation
+from metrics.cjk_metrics import (
+    calculate_cjk_metrics,
+)
+from metrics.conversation_quality import (
+    ConversationEvaluator,
 )
 
 
@@ -114,7 +121,8 @@ class TurnMetrics:
     audio_path: str
     audio_duration_s: float
     stt_transcript: str
-    stt_accuracy: float
+    stt_accuracy: float  # CER (for all languages)
+    stt_semantic_similarity: float  # Embedding-based similarity
     stt_avg_logprob: float
     response_time_s: float
     wall_time_s: float
@@ -245,12 +253,15 @@ class ConversationBenchmark:
             audio_path = str(scenario_dir / f"turn_{i+1:03d}_{role}.wav")
             audio_dur = await speaker.synthesize(text, audio_path)
 
-            # STT
+            # STT with CJK-aware metrics
             stt_text, stt_logprob = self.monitor.transcribe(audio_path)
-            stt_acc = word_accuracy(text, stt_text)
+            cjk_metrics = calculate_cjk_metrics(text, stt_text, "en")
+            stt_acc = cjk_metrics["cer"]  # CER for all languages
+            semantic_sim = cjk_metrics["semantic_similarity"]
 
             print(f"    Text: {text[:80]}{'...' if len(text) > 80 else ''}")
-            print(f"    STT:  {stt_text[:80]}{'...' if len(stt_text) > 80 else ''} ({stt_acc:.0%})")
+            print(f"    STT:  {stt_text[:80]}{'...' if len(stt_text) > 80 else ''}")
+            print(f"    CER: {stt_acc:.0%} | Semantic: {semantic_sim:.0%} | {cjk_metrics['notes']}")
 
             turn = TurnMetrics(
                 turn=i + 1,
@@ -260,6 +271,7 @@ class ConversationBenchmark:
                 audio_duration_s=audio_dur,
                 stt_transcript=stt_text,
                 stt_accuracy=stt_acc,
+                stt_semantic_similarity=semantic_sim,
                 stt_avg_logprob=stt_logprob,
                 response_time_s=resp_time,
                 wall_time_s=time.perf_counter() - t_start,
@@ -276,6 +288,7 @@ class ConversationBenchmark:
             "n_test_turns": len(test_turns),
             "avg_response_time_s": float(np.mean([t.response_time_s for t in test_turns])) if test_turns else 0,
             "avg_stt_accuracy": float(np.mean([t.stt_accuracy for t in test_turns])) if test_turns else 0,
+            "avg_stt_semantic_similarity": float(np.mean([t.stt_semantic_similarity for t in test_turns])) if test_turns else 0,
             "avg_text_length_words": float(np.mean([t.text_length_words for t in test_turns])) if test_turns else 0,
             "avg_audio_duration_s": float(np.mean([t.audio_duration_s for t in test_turns])) if test_turns else 0,
             "total_wall_time_s": turns[-1].wall_time_s if turns else 0,
@@ -289,9 +302,10 @@ class ConversationBenchmark:
             audio_dir=str(scenario_dir),
         )
         print(f"\n  Scenario metrics:")
-        print(f"    Avg response time: {metrics['avg_response_time_s']:.1f}s")
-        print(f"    Avg STT accuracy:  {metrics['avg_stt_accuracy']:.0%}")
-        print(f"    Avg text length:   {metrics['avg_text_length_words']:.1f} words")
+        print(f"    Avg response time:           {metrics['avg_response_time_s']:.1f}s")
+        print(f"    Avg STT accuracy (CER):     {metrics['avg_stt_accuracy']:.0%}")
+        print(f"    Avg STT semantic similarity: {metrics['avg_stt_semantic_similarity']:.0%}")
+        print(f"    Avg text length:             {metrics['avg_text_length_words']:.1f} words")
 
         return result
 
@@ -304,6 +318,7 @@ class ConversationBenchmark:
             "total_test_turns": 0,
             "avg_response_time_s": 0,
             "avg_stt_accuracy": 0,
+            "avg_stt_semantic_similarity": 0,
             "avg_text_length_words": 0,
             "scenario_summaries": [],
         }
@@ -317,6 +332,7 @@ class ConversationBenchmark:
                 "id": result.scenario_id,
                 "name": result.scenario_name,
                 "stt_accuracy": result.metrics["avg_stt_accuracy"],
+                "semantic_similarity": result.metrics["avg_stt_semantic_similarity"],
                 "response_time": result.metrics["avg_response_time_s"],
                 "text_length": result.metrics["avg_text_length_words"],
                 "audio_duration": result.metrics["avg_audio_duration_s"],
@@ -332,6 +348,10 @@ class ConversationBenchmark:
             ))
             overall_metrics["avg_stt_accuracy"] = float(np.average(
                 [r.metrics["avg_stt_accuracy"] for r in results],
+                weights=test_counts,
+            ))
+            overall_metrics["avg_stt_semantic_similarity"] = float(np.average(
+                [r.metrics["avg_stt_semantic_similarity"] for r in results],
                 weights=test_counts,
             ))
             overall_metrics["avg_text_length_words"] = float(np.average(
@@ -363,16 +383,17 @@ class ConversationBenchmark:
         print(f"  BENCHMARK SUMMARY — {report['model']}")
         print(f"  Speaker: {report['speaker_type']}")
         print(f"{'='*60}")
-        print(f"  Scenarios:        {overall['scenarios_run']}")
-        print(f"  Test turns:       {overall['total_test_turns']}")
-        print(f"  Avg resp time:    {overall['avg_response_time_s']:.1f}s")
-        print(f"  Avg STT accuracy: {overall['avg_stt_accuracy']:.0%}")
-        print(f"  Avg text length:  {overall['avg_text_length_words']:.1f} words")
+        print(f"  Scenarios:           {overall['scenarios_run']}")
+        print(f"  Test turns:          {overall['total_test_turns']}")
+        print(f"  Avg resp time:       {overall['avg_response_time_s']:.1f}s")
+        print(f"  Avg STT CER:         {overall['avg_stt_accuracy']:.0%}")
+        print(f"  Avg STT semantic sim: {overall['avg_stt_semantic_similarity']:.0%}")
+        print(f"  Avg text length:       {overall['avg_text_length_words']:.1f} words")
         print()
-        print(f"  {'Scenario':<25s} {'STT%':>5s} {'Resp':>6s} {'Words':>6s} {'Audio':>6s}")
+        print(f"  {'Scenario':<25s} {'CER':>4s} {'Sem':>4s} {'Resp':>6s} {'Words':>6s} {'Audio':>6s}")
         print(f"  {'-'*50}")
         for s in overall["scenario_summaries"]:
-            print(f"  {s['name']:<25s} {s['stt_accuracy']:>4.0%} {s['response_time']:>5.1f}s {s['text_length']:>5.1f}w {s['audio_duration']:>5.1f}s")
+            print(f"  {s['name']:<25s} {s['stt_accuracy']:>4.0%} {s['semantic_similarity']:>4.0%} {s['response_time']:>5.1f}s {s['text_length']:>5.1f}w {s['audio_duration']:>5.1f}s")
 
         # Save summary text
         summary_path = self.output_dir / "benchmark_summary.txt"
