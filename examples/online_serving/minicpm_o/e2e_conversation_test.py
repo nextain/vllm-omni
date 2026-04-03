@@ -137,6 +137,83 @@ class Speaker:
 
 
 # ---------------------------------------------------------------------------
+# OmniSpeaker — uses MiniCPM-o native audio output (Phase 2)
+# ---------------------------------------------------------------------------
+class OmniSpeaker(Speaker):
+    """AI speaker using vllm-omni's native audio generation.
+
+    Unlike Speaker (which uses separate LLM + edge-tts), OmniSpeaker makes
+    a single API call that returns both text and audio from the omni pipeline:
+      Thinker → Talker → Code2Wav → audio waveform
+    """
+
+    def __init__(
+        self,
+        name: str,
+        system_prompt: str,
+        api_base: str = "http://localhost:8000/v1",
+        model: str = "openbmb/MiniCPM-o-4_5",
+    ):
+        # No voice needed — uses native MiniCPM-o TTS (CosyVoice2)
+        super().__init__(
+            name=name,
+            voice="omni-native",
+            system_prompt=system_prompt,
+            api_base=api_base,
+            model=model,
+        )
+        self._pending_audio_b64: str | None = None
+
+    def generate_text(self, user_message: str) -> tuple[str, float]:
+        """Generate text + audio via omni API. Audio cached for synthesize()."""
+        import base64
+
+        self.history.append({"role": "user", "content": user_message})
+        messages = [{"role": "system", "content": self.system_prompt}] + self.history
+
+        client = get_openai_client(self.api_base)
+        t0 = time.perf_counter()
+        resp = client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            max_tokens=150,
+            temperature=0.7,
+        )
+        elapsed = time.perf_counter() - t0
+
+        # Extract text (choice 0) and audio (choice 1)
+        text = resp.choices[0].message.content.strip()
+        self.history.append({"role": "assistant", "content": text})
+
+        # Audio is in choices[1].message.audio.data (base64 WAV)
+        self._pending_audio_b64 = None
+        if len(resp.choices) > 1:
+            msg = resp.choices[1].message
+            if hasattr(msg, "audio") and msg.audio:
+                self._pending_audio_b64 = msg.audio.data
+        return text, elapsed
+
+    async def synthesize(self, text: str, output_path: str) -> float:
+        """Save native omni audio to file. Returns duration in seconds."""
+        import base64
+        import io
+
+        if self._pending_audio_b64 is None:
+            # Fallback: no audio from omni, write silence
+            print("  [WARN] No omni audio, generating 1s silence")
+            sr = 16000
+            silence = np.zeros(sr, dtype=np.float32)
+            sf.write(output_path, silence, sr)
+            return 1.0
+
+        wav_bytes = base64.b64decode(self._pending_audio_b64)
+        data, sr = sf.read(io.BytesIO(wav_bytes))
+        sf.write(output_path, data, sr)
+        self._pending_audio_b64 = None
+        return len(data) / sr
+
+
+# ---------------------------------------------------------------------------
 # Monitor — 3rd-party STT observer
 # ---------------------------------------------------------------------------
 class Monitor:
@@ -271,11 +348,13 @@ class ConversationTest:
                 "name": self.speakers[0].name,
                 "voice": self.speakers[0].voice,
                 "model": self.speakers[0].model,
+                "type": type(self.speakers[0]).__name__,
             },
             "speaker_b": {
                 "name": self.speakers[1].name,
                 "voice": self.speakers[1].voice,
                 "model": self.speakers[1].model,
+                "type": type(self.speakers[1]).__name__,
             },
             "monitor": f"whisper {self.monitor.whisper_size}",
             "output_dir": str(self.output_dir),
@@ -344,6 +423,10 @@ async def main():
     parser.add_argument(
         "--list-voices", action="store_true", help="List edge-tts voices and exit"
     )
+    parser.add_argument(
+        "--omni", action="store_true",
+        help="Phase 2: Speaker A uses MiniCPM-o native audio (instead of edge-tts)",
+    )
     args = parser.parse_args()
 
     if args.list_voices:
@@ -351,17 +434,29 @@ async def main():
         return
 
     # Default speakers
-    speaker_a = Speaker(
-        name="Alice",
-        voice="en-US-AriaNeural",
-        system_prompt=(
-            "You are Alice, a friendly and curious person. "
-            "Keep your responses to 1-2 short sentences. "
-            "Have a natural casual conversation. "
-            "Do not use filler words like 'um' or 'uh'."
-        ),
-        api_base=args.api_base,
-    )
+    if args.omni:
+        speaker_a = OmniSpeaker(
+            name="Alice-Omni",
+            system_prompt=(
+                "You are Alice, a friendly and curious person. "
+                "Keep your responses to 1-2 short sentences. "
+                "Have a natural casual conversation. "
+                "Do not use filler words like 'um' or 'uh'."
+            ),
+            api_base=args.api_base,
+        )
+    else:
+        speaker_a = Speaker(
+            name="Alice",
+            voice="en-US-AriaNeural",
+            system_prompt=(
+                "You are Alice, a friendly and curious person. "
+                "Keep your responses to 1-2 short sentences. "
+                "Have a natural casual conversation. "
+                "Do not use filler words like 'um' or 'uh'."
+            ),
+            api_base=args.api_base,
+        )
     speaker_b = Speaker(
         name="Bob",
         voice="en-US-GuyNeural",
