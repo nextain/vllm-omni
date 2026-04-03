@@ -196,13 +196,16 @@ class Qwen3OmniMoeForConditionalGeneration(
     @staticmethod
     def _module_device(module: nn.Module) -> torch.device:
         """Get the device of a module."""
-        try:
-            return next(module.parameters()).device
-        except StopIteration:
-            # No parameters; fall back to buffers or cpu
-            for _, buf in module.named_buffers(recurse=True):
-                return buf.device
-            return torch.device("cpu")
+        p = next(module.parameters(), None)
+        if p is not None:
+            return p.device
+
+        # Fall back to buffers if no parameters
+        b = next(module.buffers(), None)
+        if b is not None:
+            return b.device
+
+        return torch.device("cpu")
 
     @cached_property
     def sampler(self):

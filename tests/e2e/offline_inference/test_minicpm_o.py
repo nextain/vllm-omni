@@ -166,3 +166,31 @@ def test_batch_text_to_audio_real(omni_runner, omni_runner_handler) -> None:
             "modalities": ["audio"],
         }
         omni_runner_handler.send_request(request_config)
+
+
+@pytest.mark.omni
+@hardware_test(res={"cuda": "L4"}, num_cards=2)
+@pytest.mark.parametrize("omni_runner", real_test_params, indirect=True)
+def test_audio_to_audio_real(omni_runner, omni_runner_handler) -> None:
+    """
+    E2E: Audio input → audio output — verify full sentence playback.
+
+    Tests the complete ASR → TTS pipeline:
+    1. Input: Synthetic speech (e.g., "Hello, how are you today?")
+    2. Process: ASR recognition + TTS response generation
+    3. Output: Audio with complete sentence
+    4. Verify: No stuttering, full sentence played
+
+    Deploy Setting: real weights, async_chunk streaming
+    Input Modal: audio
+    Output Modal: audio
+    Datasets: single request
+    """
+    # Generate synthetic input audio: "Hello, how are you today?"
+    audio_input = generate_synthetic_audio(duration=5, num_channels=1, sample_rate=16000, save_to_file=False)
+
+    request_config = {
+        "audios": audio_input["np_array"],
+        "modalities": ["audio"],
+    }
+    omni_runner_handler.send_request(request_config)

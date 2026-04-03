@@ -1076,12 +1076,10 @@ class Qwen3TTSTalkerForConditionalGeneration(nn.Module):
         # CUDA. Ensure the speaker encoder is on the same device/dtype as the
         # main model before running it.
         dev = next(self.parameters()).device
-        try:
-            spk_param = next(self.speaker_encoder.parameters())
+        spk_param = next(self.speaker_encoder.parameters(), None)
+        if spk_param is not None:
             if spk_param.device != dev or spk_param.dtype != torch.bfloat16:
                 self.speaker_encoder.to(device=dev, dtype=torch.bfloat16)
-        except StopIteration:
-            pass
         # Resample to 24kHz for speaker encoder.
         target_sr = int(getattr(self.config.speaker_encoder_config, "sample_rate", 24000))
         if sr != target_sr:

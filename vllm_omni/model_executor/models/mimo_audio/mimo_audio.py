@@ -652,13 +652,17 @@ class MiMoAudioForConditionalGeneration(
 
     @staticmethod
     def _module_device(module: nn.Module) -> torch.device:
-        try:
-            return next(module.parameters()).device
-        except StopIteration:
-            # No parameters; fall back to buffers or cpu
-            for _, buf in module.named_buffers(recurse=True):
-                return buf.device
-            return torch.device("cpu")
+        """Return the device of a module (CPU fallback if no parameters)."""
+        p = next(module.parameters(), None)
+        if p is not None:
+            return p.device
+
+        # Fall back to buffers if no parameters
+        b = next(module.buffers(), None)
+        if b is not None:
+            return b.device
+
+        return torch.device("cpu")
 
     def move_submodules_to_devices(
         self,

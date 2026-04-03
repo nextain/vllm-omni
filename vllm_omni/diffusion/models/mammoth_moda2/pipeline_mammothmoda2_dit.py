@@ -117,10 +117,8 @@ class MammothModa2DiTPipeline(nn.Module):
 
     def embed_input_ids(self, input_ids: torch.Tensor) -> torch.Tensor:
         # DiT stage does not consume token embeddings; return a dummy tensor.
-        try:
-            dtype = next(self.parameters()).dtype
-        except StopIteration:
-            dtype = torch.float32
+        p = next(self.parameters(), None)
+        dtype = p.dtype if p is not None else torch.float32
         return torch.zeros(
             (input_ids.numel(), self._llm_hidden_size),
             device=input_ids.device,

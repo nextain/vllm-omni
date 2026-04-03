@@ -773,10 +773,8 @@ class MammothModa2ForConditionalGeneration(nn.Module, SupportsMultiModal, Suppor
         # to populate `inputs_embeds` buffers, so we provide a dummy tensor.
         if self.model_stage == "dit":
             hidden_size = int(self.vllm_config.model_config.get_hidden_size())
-            try:
-                target_dtype = next(self.model.parameters()).dtype
-            except StopIteration:
-                target_dtype = self.vllm_config.model_config.dtype
+            p = next(self.model.parameters(), None)
+            target_dtype = p.dtype if p is not None else self.vllm_config.model_config.dtype
             return torch.zeros(
                 (input_ids.numel(), hidden_size),
                 device=input_ids.device,

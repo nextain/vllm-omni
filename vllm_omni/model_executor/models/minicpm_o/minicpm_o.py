@@ -176,12 +176,16 @@ class MiniCPMOForConditionalGeneration(
     @staticmethod
     def _module_device(module: nn.Module) -> torch.device:
         """Return the device of a module (CPU fallback if no parameters)."""
-        try:
-            return next(module.parameters()).device
-        except StopIteration:
-            for _, buf in module.named_buffers(recurse=True):
-                return buf.device
-            return torch.device("cpu")
+        p = next(module.parameters(), None)
+        if p is not None:
+            return p.device
+
+        # Fall back to buffers if no parameters
+        b = next(module.buffers(), None)
+        if b is not None:
+            return b.device
+
+        return torch.device("cpu")
 
     @cached_property
     def sampler(self) -> Sampler:
@@ -393,13 +397,20 @@ class MiniCPMOForConditionalGeneration(
             )
 
             if thinker_hidden_states is not None and thinker_token_ids is not None:
+                import logging
+                logger = logging.getLogger(__name__)
                 t_ids = thinker_token_ids.to(device=device, dtype=torch.long)
                 # Serialization cast hidden to float32; restore model dtype
                 model_dtype = next(self.talker.parameters()).dtype
                 t_hid = thinker_hidden_states.to(device=device, dtype=model_dtype)
 
+                # Debug: Log what Talker receives
+                logger.info(f"[TALKER-PREPROCESS-DEBUG] Received thinker_token_ids shape={t_ids.shape}, thinker_hidden_states shape={t_hid.shape}")
+                logger.info(f"[TALKER-PREPROCESS-DEBUG] thinker_token_ids: {t_ids.tolist()}")
+
                 # Build conditioning: emb_text(tokens) + normalize(semantic_projection(hidden))
                 full_conditioning = self.talker.build_conditioning(t_ids, t_hid)
+                logger.info(f"[TALKER-PREPROCESS-DEBUG] full_conditioning shape={full_conditioning.shape}")
 
                 # Append boundary tokens: [tts_embeds, text_eos, audio_bos]
                 tts_config = self.config.tts_config

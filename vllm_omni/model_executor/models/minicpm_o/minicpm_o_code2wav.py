@@ -155,12 +155,14 @@ class MiniCPMOCode2Wav(nn.Module):
         self,
         codes: torch.Tensor,
         n_timesteps: int = 10,
+        left_context_size: int = 0,
     ) -> torch.Tensor:
         """Convert s3tokenizer codec tokens to audio waveform.
 
         Args:
             codes:       [batch, seq_len] — audio token IDs from Talker
             n_timesteps: Diffusion steps for the flow model (default 10)
+            left_context_size: Number of frames to preserve from previous chunk (for streaming)
 
         Returns:
             waveform: [batch, 1, audio_len]
@@ -188,13 +190,19 @@ class MiniCPMOCode2Wav(nn.Module):
         # Lazy move from CPU to the correct GPU on first forward call.
         # CosyVoice2 flow is loaded from external YAML, not nn.Module
         # registration — check device via parameters or buffers.
-        params = list(flow.parameters())
-        flow_device = params[0].device if params else next(flow.buffers()).device
+        p = next(flow.parameters(), None)
+        if p is not None:
+            flow_device = p.device
+            dtype = p.dtype
+        else:
+            b = next(flow.buffers(), None)
+            flow_device = b.device if b is not None else torch.device("cpu")
+            dtype = b.dtype if b is not None else torch.float32
+
         if flow_device != device:
             flow.to(device)
             hift.to(device)
 
-        dtype = params[0].dtype if params else torch.float32
         spk_dim = self.__dict__["_spk_embed_dim"]
 
         # CosyVoice2 flow.inference() requires batch_size == 1

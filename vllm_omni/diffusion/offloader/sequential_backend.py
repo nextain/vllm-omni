@@ -68,12 +68,8 @@ class SequentialOffloadHook(ModelHook):
                 b.data = data
 
     def _to_cpu(self, module: nn.Module) -> None:
-        try:
-            param = next(module.parameters())
-        except StopIteration:
-            return
-
-        if param.device.type == "cpu":
+        param = next(module.parameters(), None)
+        if param is None or param.device.type == "cpu":
             return
 
         self._move_params(
@@ -85,10 +81,8 @@ class SequentialOffloadHook(ModelHook):
         current_omni_platform.empty_cache()
 
     def _to_gpu(self, module: nn.Module) -> None:
-        try:
-            if next(module.parameters()).device == self.device:
-                return
-        except StopIteration:
+        p = next(module.parameters(), None)
+        if p is None or p.device == self.device:
             return
 
         self._move_params(module, self.device, non_blocking=False)
