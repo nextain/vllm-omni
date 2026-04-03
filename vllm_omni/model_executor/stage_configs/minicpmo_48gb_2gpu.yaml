@@ -74,7 +74,7 @@ stage_args:
     default_sampling_params:
       temperature: 0.9
       top_k: 50
-      max_tokens: 2048
+      max_tokens: 512
       seed: 42
       detokenize: false
       repetition_penalty: 1.05

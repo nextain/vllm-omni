@@ -298,7 +298,10 @@ def talker2code2wav_async_chunk(
 
     if current_length <= 0:
         if finished:
-            return {"code_predictor_codes": [], "finished": True}
+            return {
+                "code_predictor_codes": [],
+                "finished": torch.tensor(True, dtype=torch.bool),
+            }
         return None
 
     # Emit chunks when we reach chunk_size or when finished
@@ -329,7 +332,7 @@ def talker2code2wav_async_chunk(
     info: dict[str, Any] = {
         "code_predictor_codes": code_predictor_codes,
         "left_context_size": left_context_count,
-        "finished": finished,
+        "finished": torch.tensor(finished, dtype=torch.bool),
     }
 
     return info

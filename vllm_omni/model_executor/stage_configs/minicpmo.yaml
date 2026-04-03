@@ -5,8 +5,15 @@
 # Memory budget (24GB per GPU):
 #   GPU 0: Thinker model ~18GB + vision profile ~3.5GB + KV cache
 #   GPU 1: Talker model ~0.66GB + Code2Wav ~1.5GB + KV cache
+#
+# TODO(async_chunk): async_chunk=true requires:
+#   1. thinker2talker_async_chunk() in minicpm_o.py
+#   2. Talker talker_preprocess streaming support (prefill/decode key split)
+#   3. SharedMemoryConnector config (see qwen3_omni_moe_async_chunk.yaml)
+#   4. async_scheduling: true on stages 0 and 1
+#   Currently async_chunk=false (sequential, verified working on RTX 3090x2).
 
-async_chunk: true
+async_chunk: false
 stage_args:
   - stage_id: 0
     stage_type: llm
@@ -74,7 +81,7 @@ stage_args:
     default_sampling_params:
       temperature: 0.9
       top_k: 50
-      max_tokens: 2048
+      max_tokens: 512
       seed: 42
       detokenize: false
       repetition_penalty: 1.05
@@ -103,13 +110,9 @@ stage_args:
       tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [1]
-    custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav_async_chunk
+    custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav
     final_output: true
     final_output_type: audio
-    extra:
-      # Async chunk streaming settings
-      codec_chunk_frames: 50        # Emit audio every 50 codec frames
-      codec_left_context_frames: 10  # Overlap frames for smooth transitions
     default_sampling_params:
       temperature: 0.0
       top_p: 1.0
