@@ -236,9 +236,50 @@ class MiniCPMOCode2Wav(nn.Module):
                 wav_out = hift(mel.float())  # HiFi-GAN requires float32
                 wav = wav_out[0] if isinstance(wav_out, tuple) else wav_out
 
-            results.append(wav)
+            results.append(self._trim_silence(wav))
 
         return torch.cat(results, dim=0)
+
+    def _trim_silence(self, wav: torch.Tensor, threshold: float = 0.01) -> torch.Tensor:
+        """Trim trailing silence/noise from waveform.
+
+        The Talker may generate codec tokens up to max_tokens without
+        producing the stop token (6561).  CosyVoice2 then synthesises
+        audio for the full sequence including silence/noise for the
+        trailing portion.  This detects where speech ends by energy
+        analysis and trims the trailing silence.
+
+        Args:
+            wav: [1, audio_len] waveform tensor
+            threshold: Energy threshold as fraction of peak energy
+        """
+        if wav.numel() == 0 or wav.shape[-1] == 0:
+            return wav
+        frame_samples = int(0.04 * 16000)  # 40ms at 16kHz
+        n_frames = wav.shape[-1] // frame_samples
+        if n_frames == 0:
+            return wav
+
+        energies = torch.zeros(n_frames, device=wav.device)
+        for i in range(n_frames):
+            frame = wav[0, i * frame_samples:(i + 1) * frame_samples]
+            energies[i] = torch.mean(frame ** 2).float()
+
+        peak_energy = energies.max().item()
+        if peak_energy < 1e-8:
+            return wav
+
+        # Scan from end to find last frame above threshold
+        energy_thresh = peak_energy * threshold
+        speech_end_frame = n_frames
+        for i in range(n_frames - 1, -1, -1):
+            if energies[i] >= energy_thresh:
+                speech_end_frame = i + 1
+                break
+
+        # Trim with small padding
+        trim_sample = min((speech_end_frame + 2) * frame_samples, wav.shape[-1])
+        return wav[:, :trim_sample]
 
     def decode(self, codes: torch.Tensor) -> list[torch.Tensor]:
         """Decode codec token sequences to waveforms.
