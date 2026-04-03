@@ -74,6 +74,116 @@ def _find_tts_bound(
     return tts_bos_idx, tts_eos_idx
 
 
+def thinker2talker_async_chunk(
+    transfer_manager: Any,
+    pooling_output: dict[str, Any],
+    request: Any,
+    is_finished: bool = False,
+) -> dict[str, Any] | None:
+    """Async chunk: stream Thinker hidden states to Talker as tokens are generated.
+
+    MiniCPM-o differs from Qwen3-Omni in two ways:
+    1. Hidden states are under a single ``thinker_hidden_states`` key
+       (not split into prefill/decode layers "0" / "24").
+    2. Only the TTS-relevant portion (between <|tts_bos|> and <|tts_eos|>)
+       should be passed to the Talker — ``_find_tts_bound()`` handles this.
+
+    chunk_id == 0 (prefill):
+        - Accumulate hidden states; do not send until is_finished
+          because tts_bound can only be determined after Thinker completes.
+        - Returns None until finished (sequential behaviour matches sync mode).
+
+    chunk_id > 0 (decode):
+        - Not used in current implementation (MiniCPM-o Talker processes the
+          full tts-bound slice at once, same as sync mode).
+
+    When is_finished=True:
+        - Apply tts_bound filtering and emit the final payload.
+
+    Args:
+        transfer_manager: Per-request state manager.
+        pooling_output: Current Thinker output dict with ``thinker_hidden_states``.
+        request: vLLM request object (provides token IDs).
+        is_finished: Whether Thinker generation is complete.
+
+    Returns:
+        dict payload for Talker, or None if not ready yet.
+    """
+    request_id = request.external_req_id
+
+    # Accumulate hidden states until Thinker is done.
+    # MiniCPM-o's Talker conditioning requires the full tts-bound slice —
+    # we cannot send partial data as Qwen3 does, because tts_bound is only
+    # known after all tokens are generated.
+    if not is_finished:
+        return None
+
+    # Thinker finished — extract hidden states and apply tts_bound filter.
+    thinker_hidden_states = pooling_output.get("thinker_hidden_states")
+    if thinker_hidden_states is None:
+        return None
+
+    # Use MiniCPM-o 4.5 default TTS boundary token IDs.
+    # In async_chunk mode the request object does not expose stage config,
+    # so we fall back to hardcoded defaults (same values as thinker2talker).
+    tts_bos_id = 151703
+    tts_eos_id = 151704
+
+    # Reconstruct full token sequence (prompt + generated).
+    all_token_ids: list[int] = []
+    try:
+        prompt_ids = list(request.prompt_token_ids)
+        output_ids = list(request.output_token_ids)
+        all_token_ids = prompt_ids + output_ids
+    except AttributeError:
+        # Fallback: use whatever is available on the request object.
+        try:
+            all_token_ids = list(request.all_token_ids)
+        except AttributeError:
+            pass
+
+    # Find TTS content boundary.
+    tts_start, tts_end = _find_tts_bound(all_token_ids, tts_bos_id, tts_eos_id)
+
+    hidden_len = thinker_hidden_states.shape[0]
+    if tts_start >= hidden_len:
+        tts_start = 0
+        tts_end = None
+    if tts_end is not None and tts_end > hidden_len:
+        tts_end = hidden_len
+
+    tts_hidden = thinker_hidden_states[tts_start:tts_end]
+    tts_token_ids = all_token_ids[tts_start:tts_end] if all_token_ids else []
+
+    # Align lengths.
+    num_tts_tokens = min(len(tts_token_ids), tts_hidden.shape[0])
+    if num_tts_tokens == 0:
+        # Fallback: use full generated portion.
+        try:
+            prompt_len = len(list(request.prompt_token_ids))
+            gen_ids = list(request.output_token_ids)
+            gen_start = min(prompt_len, hidden_len)
+            gen_end = min(prompt_len + len(gen_ids), hidden_len)
+            if gen_end > gen_start:
+                tts_hidden = thinker_hidden_states[gen_start:gen_end]
+                tts_token_ids = gen_ids[: gen_end - gen_start]
+                num_tts_tokens = len(tts_token_ids)
+        except AttributeError:
+            num_tts_tokens = hidden_len
+            tts_hidden = thinker_hidden_states
+            tts_token_ids = all_token_ids[:hidden_len] if all_token_ids else []
+
+    tts_token_ids = tts_token_ids[:num_tts_tokens]
+    tts_hidden = tts_hidden[:num_tts_tokens]
+
+    return {
+        # Keys match MiniCPM-o talker_preprocess expectations (same as sync mode).
+        "thinker_token_ids": torch.tensor(tts_token_ids, dtype=torch.long),
+        "thinker_hidden_states": tts_hidden.detach().float().cpu(),
+        "finished": torch.tensor(True, dtype=torch.bool),
+    }
+
+
 def thinker2talker(
     stage_list: list[Any],
     engine_input_source: list[int],
@@ -291,8 +401,8 @@ def talker2code2wav_async_chunk(
     connector = getattr(transfer_manager, "connector", None)
     raw_cfg = getattr(connector, "config", {}) or {}
     cfg = raw_cfg.get("extra", raw_cfg) if isinstance(raw_cfg, dict) else {}
-    chunk_size = int(cfg.get("codec_chunk_frames", 50))  # 50 codec frames per chunk
-    left_context_size = int(cfg.get("codec_left_context_frames", 10))
+    chunk_size = int(cfg.get("codec_chunk_frames", 25))
+    left_context_size = int(cfg.get("codec_left_context_frames", 25))
 
     current_length = len(transfer_manager.code_prompt_token_ids[request_id])
 

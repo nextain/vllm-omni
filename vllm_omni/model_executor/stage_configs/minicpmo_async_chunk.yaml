@@ -1,0 +1,135 @@
+# MiniCPM-o 4.5 — async_chunk mode (2x RTX 3090, 24GB each)
+# NCCL_P2P_DISABLE=1 required (no NVLink)
+# Thinker on GPU 0, Talker + Code2Wav on GPU 1
+#
+# async_chunk=true enables Thinker→Talker→Code2Wav pipeline overlap.
+# Measured TTFP improvement on Qwen3-Omni: 6459ms → 523ms (~92% reduction).
+#
+# Note: MiniCPM-o Thinker must finish before Talker starts (tts_bound
+# filtering requires the full token sequence). So TTFP improvement is
+# primarily from Talker→Code2Wav streaming, not Thinker→Talker overlap.
+#
+# Sync fallback: use minicpmo_48gb_2gpu.yaml (async_chunk=false).
+
+async_chunk: true
+stage_args:
+  - stage_id: 0
+    stage_type: llm
+    runtime:
+      process: true
+      devices: "0"
+      max_batch_size: 4
+    engine_args:
+      model_stage: thinker
+      model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 4
+      worker_type: ar
+      scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+      gpu_memory_utilization: 0.88
+      enforce_eager: true
+      trust_remote_code: true
+      engine_output_type: latent
+      distributed_executor_backend: "mp"
+      enable_prefix_caching: false
+      max_num_batched_tokens: 2048
+      max_model_len: 4096
+      limit_mm_per_prompt: {video: 0}
+      tensor_parallel_size: 1
+      custom_process_next_stage_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker_async_chunk
+    final_output: true
+    final_output_type: text
+    is_comprehension: true
+    preserve_multimodal: true
+    chat_template_kwargs:
+      use_tts_template: true
+    output_connectors:
+      to_stage_1: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.6
+      top_p: 0.95
+      top_k: 20
+      max_tokens: 2048
+      seed: 42
+      detokenize: true
+      repetition_penalty: 1.05
+      stop_token_ids: [151704]
+
+  - stage_id: 1
+    stage_type: llm
+    runtime:
+      process: true
+      devices: "1"
+      max_batch_size: 4
+    engine_args:
+      model_stage: talker
+      model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 4
+      worker_type: ar
+      scheduler_cls: vllm_omni.core.sched.omni_ar_scheduler.OmniARScheduler
+      hf_config_name: tts_config
+      gpu_memory_utilization: 0.1
+      enforce_eager: true
+      trust_remote_code: true
+      engine_output_type: latent
+      enable_prefix_caching: false
+      max_num_batched_tokens: 2048
+      max_model_len: 2048
+      distributed_executor_backend: "mp"
+      tensor_parallel_size: 1
+      limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
+      custom_process_next_stage_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.talker2code2wav_async_chunk
+    engine_input_source: [0]
+    input_connectors:
+      from_stage_0: connector_of_shared_memory
+    default_sampling_params:
+      temperature: 0.9
+      top_k: 50
+      max_tokens: 512
+      seed: 42
+      detokenize: false
+      repetition_penalty: 1.05
+      stop_token_ids: [6561]
+
+  - stage_id: 2
+    stage_type: llm
+    runtime:
+      process: true
+      devices: "1"
+      max_batch_size: 4
+    engine_args:
+      model_stage: code2wav
+      model_arch: MiniCPMOForConditionalGeneration
+      max_num_seqs: 1
+      worker_type: generation
+      scheduler_cls: vllm_omni.core.sched.omni_generation_scheduler.OmniGenerationScheduler
+      enforce_eager: true
+      trust_remote_code: true
+      async_scheduling: false
+      enable_prefix_caching: false
+      engine_output_type: audio
+      gpu_memory_utilization: 0.02
+      distributed_executor_backend: "mp"
+      max_num_batched_tokens: 1000
+      tensor_parallel_size: 1
+      limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
+    engine_input_source: [1]
+    final_output: true
+    final_output_type: audio
+    default_sampling_params:
+      temperature: 0.0
+      top_p: 1.0
+      top_k: -1
+      max_tokens: 65536
+      seed: 42
+      detokenize: true
+      repetition_penalty: 1.1
+
+runtime:
+  connectors:
+    connector_of_shared_memory:
+      name: SharedMemoryConnector
+      extra:
+        # 25 codec frames per chunk (≈ 400ms audio at 16kHz/16ms per frame).
+        # Left context prevents boundary artifacts in Code2Wav decoding.
+        codec_chunk_frames: 25
+        codec_left_context_frames: 25
