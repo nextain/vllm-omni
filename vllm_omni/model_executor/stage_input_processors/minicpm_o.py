@@ -364,10 +364,20 @@ def talker2code2wav_async_chunk(
     MiniCPM-o uses num_vq=1 (single RVQ layer), so codec tokens are
     flat (1D). Each generated token is a single codec frame.
 
+    Why ``request.output_token_ids`` instead of ``pooling_output["code_predictor_codes"]``
+    (the pattern used by Qwen3-Omni and MIMO-Audio):
+        Qwen3/MIMO have a *separate code predictor head* whose multi-layer RVQ
+        predictions are stored in ``pooling_output["code_predictor_codes"]``.
+        MiniCPM-o Talker has no such head — it performs plain auto-regressive
+        decoding where each sampled token ID *is* the codec frame (num_vq=1).
+        ``pooling_output`` therefore contains only raw hidden states (``"hidden"``
+        key) and no codec codes.  Reading the sampled IDs via ``request.output_token_ids``
+        with a cursor-based delta is the only correct approach for this model.
+
     Args:
         transfer_manager: Manages per-request token accumulation
-        pooling_output: Current Talker output with codec tokens
-        request: vLLM request object
+        pooling_output: Current Talker output (hidden states only — no codec codes)
+        request: vLLM request object (codec tokens read from output_token_ids)
         is_finished: Whether generation is complete
 
     Returns:
