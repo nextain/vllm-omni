@@ -13,9 +13,16 @@ Each scenario produces:
   - benchmark_summary.txt (human-readable)
 
 Usage (from distrobox vllm-dev):
-    python examples/online_serving/minicpm_o/conversation_benchmark.py
-    python examples/online_serving/minicpm_o/conversation_benchmark.py --omni
-    python examples/online_serving/minicpm_o/conversation_benchmark.py --output-dir /tmp/bench_run1
+    # Standard mode (edge-tts TTS, sync server)
+    cd examples/online_serving/minicpm_o/
+    python conversation_benchmark.py
+    python conversation_benchmark.py --output-dir /tmp/bench_run1
+
+    # Omni native audio mode — requires async_chunk server:
+    vllm serve openbmb/MiniCPM-o-4_5 --omni \
+      --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
+      --trust-remote-code --port 8000
+    python conversation_benchmark.py --omni
 """
 
 from __future__ import annotations
@@ -248,7 +255,8 @@ class ConversationBenchmark:
             label = f"  Turn {i+1} [{role}]"
             print(f"{label}: thinking...", end=" ", flush=True)
             text, resp_time = speaker.generate_text(current_text)
-            ttfp = getattr(speaker, "_last_ttfp", None) or resp_time
+            _last_ttfp = getattr(speaker, "_last_ttfp", None)
+            ttfp = _last_ttfp if _last_ttfp is not None else resp_time
             print(f"({resp_time:.1f}s, TTFP={ttfp:.2f}s)")
 
             # Synthesize
@@ -339,6 +347,7 @@ class ConversationBenchmark:
                 "stt_accuracy": result.metrics["avg_stt_accuracy"],
                 "semantic_similarity": result.metrics["avg_stt_semantic_similarity"],
                 "response_time": result.metrics["avg_response_time_s"],
+                "ttfp_s": result.metrics["avg_ttfp_s"],
                 "text_length": result.metrics["avg_text_length_words"],
                 "audio_duration": result.metrics["avg_audio_duration_s"],
             })
@@ -400,10 +409,10 @@ class ConversationBenchmark:
         print(f"  Avg STT semantic sim: {overall['avg_stt_semantic_similarity']:.0%}")
         print(f"  Avg text length:       {overall['avg_text_length_words']:.1f} words")
         print()
-        print(f"  {'Scenario':<25s} {'CER':>4s} {'Sem':>4s} {'Resp':>6s} {'Words':>6s} {'Audio':>6s}")
-        print(f"  {'-'*50}")
+        print(f"  {'Scenario':<25s} {'CER':>4s} {'Sem':>4s} {'TTFP':>6s} {'Resp':>6s} {'Words':>6s} {'Audio':>6s}")
+        print(f"  {'-'*57}")
         for s in overall["scenario_summaries"]:
-            print(f"  {s['name']:<25s} {s['stt_accuracy']:>4.0%} {s['semantic_similarity']:>4.0%} {s['response_time']:>5.1f}s {s['text_length']:>5.1f}w {s['audio_duration']:>5.1f}s")
+            print(f"  {s['name']:<25s} {s['stt_accuracy']:>4.0%} {s['semantic_similarity']:>4.0%} {s['ttfp_s']:>5.2f}s {s['response_time']:>5.1f}s {s['text_length']:>5.1f}w {s['audio_duration']:>5.1f}s")
 
         # Save summary text
         summary_path = self.output_dir / "benchmark_summary.txt"

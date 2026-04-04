@@ -51,7 +51,7 @@ def get_whisper_model(model_size: str = "base"):
 
 def get_openai_client(api_base: str) -> "OpenAI":
     global _openai_client
-    if _openai_client is None or _openai_client._base_url != api_base:
+    if _openai_client is None or str(_openai_client._base_url) != api_base:
         from openai import OpenAI
 
         _openai_client = OpenAI(base_url=api_base, api_key="unused")

@@ -9,6 +9,7 @@ Based on 2024-2025 research:
 
 from __future__ import annotations
 
+import math
 import re
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -124,8 +125,6 @@ class ConversationEvaluator:
 
     def _calculate_relevance(self, prev: str, curr: str) -> float:
         """Helper: calculate relevance between two consecutive turns."""
-        from .cjk_metrics import semantic_similarity
-
         if self.semantic_model:
             return self.semantic_model(prev, curr)
         else:
@@ -215,7 +214,8 @@ class ConversationEvaluator:
             if energy > 0.01:
                 speech_frames += 1
 
-        speech_ratio = speech_frames / (len(data) / frame_length)
+        total_frames = math.ceil(len(data) / frame_length)
+        speech_ratio = speech_frames / total_frames if total_frames > 0 else 0.0
 
         return {
             "speech_ratio": float(speech_ratio),

@@ -55,6 +55,8 @@ dev = [
     "pyttsx3>=2.99",
     "opencc>=1.2.0",
     "mistune>=3.2.0", # for example tests
+    "edge-tts>=6.1.9", # for minicpm_o conversation examples
+    "openai>=1.0.0", # for minicpm_o conversation examples
 ]
 
 demo = [

@@ -374,22 +374,25 @@ def talker2code2wav_async_chunk(
         dict with chunk info for Code2Wav, or None if not ready yet
     """
     request_id = request.external_req_id
-    finished = bool(is_finished or request.is_finished())
+    # Use is_finished parameter authoritatively; avoid racing against request state.
+    finished = bool(is_finished)
 
-    # Initialize per-request token storage and last-seen index
+    # Initialize per-request token storage, cursor, and emitted-length tracker.
     if not hasattr(transfer_manager, "code_prompt_token_ids"):
         transfer_manager.code_prompt_token_ids = {}
     if not hasattr(transfer_manager, "_talker_token_cursor"):
         transfer_manager._talker_token_cursor = {}
+    if not hasattr(transfer_manager, "_talker_emitted_len"):
+        transfer_manager._talker_emitted_len = {}
 
     if request_id not in transfer_manager.code_prompt_token_ids:
         transfer_manager.code_prompt_token_ids[request_id] = []
         transfer_manager._talker_token_cursor[request_id] = 0
+        transfer_manager._talker_emitted_len[request_id] = 0
 
     # Extract newly generated codec tokens from request.output_token_ids.
-    # pooling_output["hidden"] contains raw hidden states, NOT token ids.
-    # The sampled codec tokens live in request.output_token_ids (cumulative).
-    # We read only the delta since the last call using a cursor.
+    # pooling_output["hidden"] contains raw hidden states, NOT sampled token ids.
+    # Cumulative output is in request.output_token_ids; read only the delta via cursor.
     try:
         all_output_ids = list(request.output_token_ids)
     except AttributeError:
@@ -397,10 +400,10 @@ def talker2code2wav_async_chunk(
 
     cursor = transfer_manager._talker_token_cursor[request_id]
     new_tokens = all_output_ids[cursor:]
-    transfer_manager._talker_token_cursor[request_id] = len(all_output_ids)
-
-    # MiniCPM-o Talker stop token is 6561 — skip it
+    # MiniCPM-o Talker stop token is 6561 — filter before advancing cursor
     new_tokens = [t for t in new_tokens if t != 6561]
+    # Advance cursor by original delta length (including any filtered stop tokens)
+    transfer_manager._talker_token_cursor[request_id] = len(all_output_ids)
     transfer_manager.code_prompt_token_ids[request_id].extend(new_tokens)
 
     # Get chunk config from stage config
@@ -411,42 +414,47 @@ def talker2code2wav_async_chunk(
     left_context_size = int(cfg.get("codec_left_context_frames", 25))
 
     current_length = len(transfer_manager.code_prompt_token_ids[request_id])
+    emitted_len = transfer_manager._talker_emitted_len[request_id]
+    pending = current_length - emitted_len  # tokens not yet sent to Code2Wav
 
-    if current_length <= 0:
+    if pending <= 0:
         if finished:
-            return {
-                "code_predictor_codes": [],
-                "finished": torch.tensor(True, dtype=torch.bool),
-            }
+            # Clean up to avoid memory leak across requests
+            transfer_manager.code_prompt_token_ids.pop(request_id, None)
+            transfer_manager._talker_token_cursor.pop(request_id, None)
+            transfer_manager._talker_emitted_len.pop(request_id, None)
+        # No pending tokens — nothing to emit (matches Qwen3 pattern)
         return None
 
-    # Emit chunks when we reach chunk_size or when finished
-    # But ensure we have at least some tokens to work with
-    if not finished and current_length % chunk_size != 0:
+    # Emit when we have at least chunk_size pending tokens, or when finished.
+    # Use >= threshold (not % modulo) so tokens are never permanently blocked
+    # even when multiple tokens arrive in one call and skip the exact boundary.
+    if not finished and pending < chunk_size:
         return None
 
-    # Determine chunk length with left context
-    if finished:
-        chunk_length = current_length
-    else:
-        chunk_length = min(chunk_size, current_length)
+    # Emit only the pending (not-yet-sent) tokens plus left context.
+    chunk_length = pending  # all pending tokens form the new chunk
+    chunk_start = emitted_len  # start of new tokens in the accumulated list
+    left_start = max(0, chunk_start - left_context_size)
+    left_context_count = chunk_start - left_start
 
-    # Calculate left context (frames before current chunk)
-    start_index = max(0, current_length - left_context_size - chunk_length)
-    chunk_start = current_length - chunk_length
-    left_context_count = chunk_start - start_index
-
-    # Extract window: left_context + current_chunk
     window_frames = transfer_manager.code_prompt_token_ids[request_id][
-        start_index:chunk_start + chunk_length
+        left_start : chunk_start + chunk_length
     ]
 
-    # For MiniCPM-o (num_vq=1), code_predictor_codes is just the flat list
-    # Qwen3-TTS interleaves quantizers: [f0[q0], f0[q1], f1[q0], f1[q1], ...
-    code_predictor_codes = window_frames
+    # Advance emitted pointer
+    transfer_manager._talker_emitted_len[request_id] = current_length
 
+    if finished:
+        # Clean up after final chunk
+        transfer_manager.code_prompt_token_ids.pop(request_id, None)
+        transfer_manager._talker_token_cursor.pop(request_id, None)
+        transfer_manager._talker_emitted_len.pop(request_id, None)
+
+    # For MiniCPM-o (num_vq=1), code_predictor_codes is just the flat list.
+    # Qwen3-TTS interleaves quantizers: [f0[q0], f0[q1], f1[q0], f1[q1], ...]
     info: dict[str, Any] = {
-        "code_predictor_codes": code_predictor_codes,
+        "code_predictor_codes": window_frames,
         "left_context_size": left_context_count,
         "finished": torch.tensor(finished, dtype=torch.bool),
     }
