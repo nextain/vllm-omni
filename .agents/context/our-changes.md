@@ -45,6 +45,28 @@ All paths relative to `vllm_omni/model_executor/`:
 | `models/registry.py` | Added 6 MiniCPM-o model entries |
 | `pyproject.toml` | Added `sentence-transformers`, `scikit-learn` optional deps |
 
+## Offline Inference Examples (examples/offline_inference/minicpm_o/)
+
+Added complete offline inference example directory:
+
+| File | Purpose |
+|------|---------|
+| `end2end.py` | Sync offline inference via `Omni` class; text/image/audio/image+audio query types |
+| `end2end_async_chunk.py` | Async offline inference via `AsyncOmni`; stage-level concurrency |
+| `run_single_prompt.sh` | Single prompt convenience script |
+| `run_multiple_prompts.sh` | Multi-prompt batch with `--py-generator` |
+| `run_single_prompt_async_chunk.sh` | Single prompt with async_chunk (TTFP ~0.07s) |
+| `run_multiple_prompts_async_chunk.sh` | Multi-prompt async_chunk with `--max-in-flight` |
+| `text_prompts_10.txt` | Sample AI-related prompts for batch testing |
+| `README.md` | Usage guide matching qwen3_omni offline format |
+
+**SamplingParams alignment** (from 8-pass adversarial review):
+- Thinker: `temperature=0.6, top_p=0.95, top_k=20, max_tokens=2048, detokenize=True, repetition_penalty=1.05`
+- Talker: `temperature=0.9, top_k=50, max_tokens=4096, detokenize=False, repetition_penalty=1.05, stop_token_ids=[6561]`
+- Code2Wav: `temperature=0.0, top_p=1.0, top_k=-1, max_tokens=65536, detokenize=True, repetition_penalty=1.1`
+
+---
+
 ## Benchmark Scripts (examples/online_serving/minicpm_o/)
 
 | File | Changes (multi-pass adversarial review) |
@@ -135,6 +157,9 @@ Input (text + image/audio)
 | conversation_benchmark.py | ✅ | Label correction |
 | language_test.py | ✅ | stt_cer/word_accuracy separation, evaluate_conversation fix |
 | voicebench_runner.py | ✅ | SampleResult fields, exception handling, CATEGORIES deepcopy |
+| offline_inference/minicpm_o/end2end.py | ✅ | 8-pass adversarial review; SamplingParams aligned |
+| offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8-pass review; init_timeout, use_image_audio added |
+| offline_inference/minicpm_o/run_*.sh | ✅ | File existence checks, PROMPTS_FILE variable reuse |
 
 ---
 

@@ -43,6 +43,28 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | `models/registry.py` | MiniCPM-o 6개 엔트리 추가 |
 | `pyproject.toml` | `sentence-transformers`, `scikit-learn` 선택적 의존성 추가 |
 
+## 오프라인 추론 예제 (examples/offline_inference/minicpm_o/)
+
+오프라인 추론 예제 디렉토리 신규 추가:
+
+| 파일 | 목적 |
+|------|------|
+| `end2end.py` | 동기 오프라인 추론 (`Omni` 클래스); text/image/audio/image+audio 쿼리 타입 |
+| `end2end_async_chunk.py` | 비동기 오프라인 추론 (`AsyncOmni`); 스테이지 수준 동시성 |
+| `run_single_prompt.sh` | 단일 프롬프트 편의 스크립트 |
+| `run_multiple_prompts.sh` | 멀티 프롬프트 배치 (`--py-generator` 포함) |
+| `run_single_prompt_async_chunk.sh` | async_chunk 단일 프롬프트 (TTFP ~0.07s) |
+| `run_multiple_prompts_async_chunk.sh` | async_chunk 멀티 프롬프트 (`--max-in-flight` 제어) |
+| `text_prompts_10.txt` | AI 관련 샘플 프롬프트 10개 |
+| `README.md` | qwen3_omni offline 포맷에 맞춘 사용 가이드 |
+
+**SamplingParams 정렬** (8패스 적대적 리뷰 후):
+- Thinker: `temperature=0.6, top_p=0.95, top_k=20, max_tokens=2048, detokenize=True, repetition_penalty=1.05`
+- Talker: `temperature=0.9, top_k=50, max_tokens=4096, detokenize=False, repetition_penalty=1.05, stop_token_ids=[6561]`
+- Code2Wav: `temperature=0.0, top_p=1.0, top_k=-1, max_tokens=65536, detokenize=True, repetition_penalty=1.1`
+
+---
+
 ## 벤치마크 스크립트 (examples/online_serving/minicpm_o/)
 
 | 파일 | 수정 내용 (멀티패스 적대적 리뷰) |
@@ -133,6 +155,9 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | conversation_benchmark.py | ✅ | 레이블 수정 |
 | language_test.py | ✅ | stt_cer/word_accuracy 분리, evaluate_conversation 수정 |
 | voicebench_runner.py | ✅ | SampleResult 필드명, 예외 처리, CATEGORIES deepcopy |
+| offline_inference/minicpm_o/end2end.py | ✅ | 8패스 적대적 리뷰; SamplingParams 정렬 완료 |
+| offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8패스 리뷰; init_timeout, use_image_audio 추가 |
+| offline_inference/minicpm_o/run_*.sh | ✅ | 파일 존재 검사, PROMPTS_FILE 변수 재사용 |
 
 ---
 

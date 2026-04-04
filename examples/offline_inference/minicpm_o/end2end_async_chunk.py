@@ -19,8 +19,11 @@ Usage
 See ``--help`` for all options.
 """
 
-import asyncio
 import os
+
+os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
+
+import asyncio
 import time
 import uuid
 from typing import NamedTuple
@@ -35,8 +38,6 @@ from vllm.assets.image import ImageAsset
 from vllm.utils.argparse_utils import FlexibleArgumentParser
 
 from vllm_omni.entrypoints.async_omni import AsyncOmni
-
-os.environ.setdefault("VLLM_WORKER_MULTIPROC_METHOD", "spawn")
 
 SEED = 42
 
@@ -102,10 +103,39 @@ def get_audio_query(
     )
 
 
+def get_image_audio_query(
+    question: str = None,
+    image_path: str | None = None,
+    audio_path: str | None = None,
+    sampling_rate: int = 16000,
+) -> QueryResult:
+    if question is None:
+        question = "Describe what you see in the image and what you hear in the audio."
+    prompt = _build_prompt(f"(<image>./</image>)\n(<audio>./</audio>)\n{question}")
+    if image_path:
+        if not os.path.exists(image_path):
+            raise FileNotFoundError(f"Image file not found: {image_path}")
+        image_data = Image.open(image_path).convert("RGB")
+    else:
+        image_data = ImageAsset("cherry_blossom").pil_image.convert("RGB")
+    if audio_path:
+        if not os.path.exists(audio_path):
+            raise FileNotFoundError(f"Audio file not found: {audio_path}")
+        audio_signal, sr = librosa.load(audio_path, sr=sampling_rate)
+        audio_data = (audio_signal.astype(np.float32), sr)
+    else:
+        audio_data = AudioAsset("mary_had_lamb").audio_and_sample_rate
+    return QueryResult(
+        inputs={"prompt": prompt, "multi_modal_data": {"image": image_data, "audio": audio_data}},
+        limit_mm_per_prompt={"image": 1, "audio": 1},
+    )
+
+
 query_map = {
     "text": get_text_query,
     "use_image": get_image_query,
     "use_audio": get_audio_query,
+    "use_image_audio": get_image_audio_query,
 }
 
 
@@ -243,6 +273,12 @@ async def run_all(args):
             audio_path=getattr(args, "audio_path", None),
             sampling_rate=getattr(args, "sampling_rate", 16000),
         )
+    elif args.query_type == "use_image_audio":
+        query_result = query_func(
+            image_path=getattr(args, "image_path", None),
+            audio_path=getattr(args, "audio_path", None),
+            sampling_rate=getattr(args, "sampling_rate", 16000),
+        )
     else:
         query_result = query_func()
 
@@ -268,6 +304,7 @@ async def run_all(args):
             stage_configs_path=args.stage_configs_path,
             log_stats=args.log_stats,
             stage_init_timeout=args.stage_init_timeout,
+            init_timeout=args.init_timeout,
         )
 
         # Use sampling params from stage config YAML (pre-configured for MiniCPM-o)
@@ -349,6 +386,7 @@ def parse_args():
     )
     parser.add_argument("--log-stats", action="store_true", default=False)
     parser.add_argument("--stage-init-timeout", type=int, default=300)
+    parser.add_argument("--init-timeout", type=int, default=300)
     parser.add_argument("--output-dir", type=str, default="output_audio_async_chunk")
     parser.add_argument("--num-prompts", type=int, default=1)
     parser.add_argument("--txt-prompts", type=str, default=None)

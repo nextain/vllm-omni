@@ -88,6 +88,14 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 - **수정**: `feat/minicpm-o` → fork `main` force push; `feat/minicpm-o` 브랜치 삭제
 - **결과**: 모든 작업이 `nextain/vllm-omni` main에 있음. 브랜치 없이 main에서 작업.
 
+### Phase 9: 오프라인 추론 예제 + README 구조
+- `examples/offline_inference/minicpm_o/` 신규 생성 (end2end.py, end2end_async_chunk.py, 쉘 스크립트 4개, README.md, text_prompts_10.txt)
+- `examples/online_serving/minicpm_o/README.md` 재작성 (벤치마크 보고서 형식 → qwen3_omni 사용 가이드 형식)
+- 포크 루트 `README.md` + `README.ko.md` (영/한) 추가; upstream README → `README.upstream.md`로 이름 변경
+- **8패스 적대적 헤드리스 리뷰** → 12개 CRITICAL 수정 적용
+- **주요 버그**: SamplingParams 값 minicpmo.yaml 불일치, 멀티 프롬프트 dict 공유 참조, async_chunk에서 use_image_audio 누락, import 이후 VLLM_WORKER_MULTIPROC_METHOD 설정, async_chunk --init-timeout 누락
+- 2연속 클린 패스 달성 (Pass 7 + Pass 8)
+
 ---
 
 ## 핵심 upstream 발견사항

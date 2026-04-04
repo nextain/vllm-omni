@@ -143,6 +143,15 @@ internal history but are superseded by `BENCHMARK.md` / `BENCHMARK.ko.md`.
 
 ---
 
+### Phase 9: Offline inference examples + README structure
+- Added `examples/offline_inference/minicpm_o/` directory (end2end.py, end2end_async_chunk.py, 4 shell scripts, README.md, text_prompts_10.txt)
+- Added `examples/online_serving/minicpm_o/README.md` (rewrote from benchmark report format → qwen3_omni usage guide format)
+- Added `examples/online_serving/minicpm_o/README.ko.md` (Korean mirror)
+- Added fork-level `README.md` + `README.ko.md` (EN/KO); renamed upstream README → `README.upstream.md`
+- **8-pass adversarial headless review** on offline inference scripts → 12 CRITICAL fixes applied
+- **Key bugs caught in review**: SamplingParams values misaligned with minicpmo.yaml, shared dict reference for multi-prompt, use_image_audio missing from async_chunk, VLLM_WORKER_MULTIPROC_METHOD set after imports, --init-timeout missing from async_chunk
+- 2 consecutive clean passes achieved (Pass 7 + Pass 8)
+
 ## Files to Review When Resuming
 
 ```

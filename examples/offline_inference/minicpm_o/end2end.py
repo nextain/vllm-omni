@@ -14,7 +14,6 @@ Output: PCM audio (WAV)
 """
 
 import os
-import time
 from typing import NamedTuple
 
 import librosa
@@ -108,11 +107,13 @@ def get_audio_query(
 
 
 def get_image_audio_query(
+    question: str = None,
     image_path: str | None = None,
     audio_path: str | None = None,
     sampling_rate: int = 16000,
 ) -> QueryResult:
-    question = "Describe what you see in the image and what you hear in the audio."
+    if question is None:
+        question = "Describe what you see in the image and what you hear in the audio."
     prompt = _build_prompt(f"(<image>./</image>)\n(<audio>./</audio>)\n{question}")
 
     if image_path:
@@ -182,10 +183,11 @@ def main(args):
     # Sampling parameters — aligned with minicpmo.yaml defaults
     thinker_sampling_params = SamplingParams(
         temperature=0.6,
-        top_p=0.9,
+        top_p=0.95,
         top_k=20,
         max_tokens=2048,
         seed=SEED,
+        detokenize=True,
         repetition_penalty=1.05,
     )
 
@@ -195,15 +197,18 @@ def main(args):
         max_tokens=4096,
         seed=SEED,
         detokenize=False,
+        repetition_penalty=1.05,
         stop_token_ids=[6561],  # Talker codec EOS
     )
 
     code2wav_sampling_params = SamplingParams(
         temperature=0.0,
+        top_p=1.0,
         top_k=-1,
         max_tokens=65536,
         seed=SEED,
         detokenize=True,
+        repetition_penalty=1.1,
     )
 
     num_stages = omni.num_stages
@@ -215,7 +220,7 @@ def main(args):
     sampling_params_list = all_sampling_params[:num_stages]
 
     if args.txt_prompts is None:
-        prompts = [query_result.inputs for _ in range(args.num_prompts)]
+        prompts = [dict(query_result.inputs) for _ in range(args.num_prompts)]
     else:
         assert args.query_type == "text", "--txt-prompts is only supported for text query type"
         with open(args.txt_prompts, encoding="utf-8") as f:
