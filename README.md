@@ -13,7 +13,7 @@ This fork adds **MiniCPM-o 4.5** omni model support to vllm-omni as an upstream 
 
 **Hardware target**: 2× RTX 3090 (48 GB total, no NVLink) — consumer-grade multi-GPU setup powering [Naia OS](https://github.com/nextain/naia-os), an AI-native desktop OS.
 
-**Methodology**: The entire contribution workflow — upstream pattern analysis, implementation, and adversarial code review using headless subagents — was driven by an AI coding agent. This is a proof of concept for **AI-native open-source contribution**.
+**Methodology**: The entire contribution workflow — upstream pattern analysis, implementation, and adversarial code review using headless subagents — was driven by an AI coding agent. This is a proof of concept for **AI-native open-source contribution**. Full implementation history: [`.agents/context/contribution-journey.md`](.agents/context/contribution-journey.md)
 
 ---
 
@@ -75,9 +75,9 @@ See [`examples/offline_inference/minicpm_o/`](examples/offline_inference/minicpm
 
 | Config | Use case | GPU |
 |--------|---------|-----|
-| `minicpmo.yaml` | Single 24 GB GPU | RTX 3090 × 1 |
-| `minicpmo_48gb_2gpu.yaml` | 2× 24 GB GPU, sync | RTX 3090 × 2 |
-| `minicpmo_async_chunk.yaml` | 2× 24 GB GPU, streaming (TTFP ~0.07s) | RTX 3090 × 2 |
+| [`minicpmo.yaml`](vllm_omni/model_executor/stage_configs/minicpmo.yaml) | Single 24 GB GPU | RTX 3090 × 1 |
+| [`minicpmo_48gb_2gpu.yaml`](vllm_omni/model_executor/stage_configs/minicpmo_48gb_2gpu.yaml) | 2× 24 GB GPU, sync | RTX 3090 × 2 |
+| [`minicpmo_async_chunk.yaml`](vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml) | 2× 24 GB GPU, streaming (TTFP ~0.07s) | RTX 3090 × 2 |
 
 ---
 
@@ -113,13 +113,13 @@ Full benchmark report: [`examples/online_serving/minicpm_o/BENCHMARK.md`](exampl
 
 | Path | Purpose |
 |------|---------|
-| `vllm_omni/model_executor/models/minicpm_o/` | Model code (Thinker / Talker / Code2Wav + config) |
-| `vllm_omni/model_executor/stage_input_processors/minicpm_o.py` | Stage-to-stage data transfer (sync + async_chunk) |
-| `vllm_omni/model_executor/stage_configs/minicpmo*.yaml` | 3 stage configs (single-GPU / 2-GPU / async_chunk) |
-| `examples/offline_inference/minicpm_o/` | Offline inference scripts |
-| `examples/online_serving/minicpm_o/` | Online serving scripts + benchmark suite |
+| [`vllm_omni/model_executor/models/minicpm_o/`](vllm_omni/model_executor/models/minicpm_o/) | Model code (Thinker / Talker / Code2Wav + config) |
+| [`vllm_omni/model_executor/stage_input_processors/minicpm_o.py`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) | Stage-to-stage data transfer (sync + async_chunk) |
+| [`vllm_omni/model_executor/stage_configs/`](vllm_omni/model_executor/stage_configs/) | 3 stage configs (single-GPU / 2-GPU / async_chunk) |
+| [`examples/offline_inference/minicpm_o/`](examples/offline_inference/minicpm_o/) | Offline inference scripts |
+| [`examples/online_serving/minicpm_o/`](examples/online_serving/minicpm_o/) | Online serving scripts + benchmark suite |
 
-Modified: `models/registry.py` (6 model entries), `pyproject.toml` (optional deps).
+Modified: [`models/registry.py`](vllm_omni/model_executor/models/registry.py) (6 model entries), [`pyproject.toml`](pyproject.toml) (optional deps).
 
 ---
 
@@ -127,8 +127,10 @@ Modified: `models/registry.py` (6 model entries), `pyproject.toml` (optional dep
 
 | Issue | Impact | Workaround |
 |-------|--------|-----------|
-| Stop token 6561 rarely generated | Audio fixed at ~20s | `_trim_silence()` post-processing |
+| Stop token 6561 rarely generated | Audio fixed at ~20s | [`_trim_silence()`](vllm_omni/model_executor/models/minicpm_o/minicpm_o_code2wav.py) post-processing |
 | Korean TTS failure | Garbled audio | CosyVoice2 not trained on Korean |
+
+See [`BENCHMARK.md § Known Issues`](examples/online_serving/minicpm_o/BENCHMARK.md#6-known-issues) for full details.
 
 ---
 
@@ -136,10 +138,8 @@ Modified: `models/registry.py` (6 model entries), `pyproject.toml` (optional dep
 
 - `NCCL_P2P_DISABLE=1` — required for RTX 3090 (no NVLink)
 - `max_inflight: 1` — prevents OOM from concurrent stage memory (upstream [#1387](https://github.com/vllm-project/vllm-omni/issues/1387))
-- `_find_tts_bound()` — MiniCPM-o embeds TTS tokens inline in Thinker output; boundary detection required
-- `_ensure_list()` — vLLM `ConstantList` type does not iterate correctly via `list()`
-
-Full implementation history: [`.agents/context/contribution-journey.md`](.agents/context/contribution-journey.md)
+- [`_find_tts_bound()`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) — MiniCPM-o embeds TTS tokens inline in Thinker output; boundary detection required
+- [`_ensure_list()`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) — vLLM `ConstantList` type does not iterate correctly via `list()`
 
 ---
 

@@ -13,7 +13,7 @@
 
 **하드웨어 타깃**: 2× RTX 3090 (총 48 GB, NVLink 없음) — [Naia OS](https://github.com/nextain/naia-os)의 로컬 AI 추론을 위한 소비자급 멀티 GPU 환경.
 
-**방법론**: 업스트림 패턴 분석, 구현, 헤드리스 서브에이전트를 이용한 적대적 코드 리뷰까지 전 과정을 AI 에이전트가 수행했습니다. **AI-native 오픈소스 기여** 방법론 실험입니다.
+**방법론**: 업스트림 패턴 분석, 구현, 헤드리스 서브에이전트를 이용한 적대적 코드 리뷰까지 전 과정을 AI 에이전트가 수행했습니다. **AI-native 오픈소스 기여** 방법론 실험입니다. 전체 구현 히스토리: [`.agents/context/contribution-journey.md`](.agents/context/contribution-journey.md)
 
 ---
 
@@ -75,9 +75,9 @@ vllm serve openbmb/MiniCPM-o-4_5 --omni \
 
 | Config | 사용 환경 | GPU |
 |--------|----------|-----|
-| `minicpmo.yaml` | 단일 24 GB GPU | RTX 3090 × 1 |
-| `minicpmo_48gb_2gpu.yaml` | 2× 24 GB GPU, 동기 모드 | RTX 3090 × 2 |
-| `minicpmo_async_chunk.yaml` | 2× 24 GB GPU, 스트리밍 (TTFP ~0.07s) | RTX 3090 × 2 |
+| [`minicpmo.yaml`](vllm_omni/model_executor/stage_configs/minicpmo.yaml) | 단일 24 GB GPU | RTX 3090 × 1 |
+| [`minicpmo_48gb_2gpu.yaml`](vllm_omni/model_executor/stage_configs/minicpmo_48gb_2gpu.yaml) | 2× 24 GB GPU, 동기 모드 | RTX 3090 × 2 |
+| [`minicpmo_async_chunk.yaml`](vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml) | 2× 24 GB GPU, 스트리밍 (TTFP ~0.07s) | RTX 3090 × 2 |
 
 ---
 
@@ -113,13 +113,13 @@ vllm serve openbmb/MiniCPM-o-4_5 --omni \
 
 | 경로 | 목적 |
 |-----|------|
-| `vllm_omni/model_executor/models/minicpm_o/` | 모델 코드 (Thinker / Talker / Code2Wav + config) |
-| `vllm_omni/model_executor/stage_input_processors/minicpm_o.py` | 스테이지 간 데이터 전송 (sync + async_chunk) |
-| `vllm_omni/model_executor/stage_configs/minicpmo*.yaml` | stage config 3종 (단일 GPU / 2-GPU / async_chunk) |
-| `examples/offline_inference/minicpm_o/` | 오프라인 추론 스크립트 |
-| `examples/online_serving/minicpm_o/` | 온라인 서빙 스크립트 + 벤치마크 모음 |
+| [`vllm_omni/model_executor/models/minicpm_o/`](vllm_omni/model_executor/models/minicpm_o/) | 모델 코드 (Thinker / Talker / Code2Wav + config) |
+| [`vllm_omni/model_executor/stage_input_processors/minicpm_o.py`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) | 스테이지 간 데이터 전송 (sync + async_chunk) |
+| [`vllm_omni/model_executor/stage_configs/`](vllm_omni/model_executor/stage_configs/) | stage config 3종 (단일 GPU / 2-GPU / async_chunk) |
+| [`examples/offline_inference/minicpm_o/`](examples/offline_inference/minicpm_o/) | 오프라인 추론 스크립트 |
+| [`examples/online_serving/minicpm_o/`](examples/online_serving/minicpm_o/) | 온라인 서빙 스크립트 + 벤치마크 모음 |
 
-수정: `models/registry.py` (모델 엔트리 6개), `pyproject.toml` (선택적 의존성 추가).
+수정: [`models/registry.py`](vllm_omni/model_executor/models/registry.py) (모델 엔트리 6개), [`pyproject.toml`](pyproject.toml) (선택적 의존성 추가).
 
 ---
 
@@ -127,8 +127,10 @@ vllm serve openbmb/MiniCPM-o-4_5 --omni \
 
 | 문제 | 영향 | 완화책 |
 |------|------|-------|
-| Stop token 6561 미생성 | 오디오 ~20s 고정 | `_trim_silence()` 후처리 |
+| Stop token 6561 미생성 | 오디오 ~20s 고정 | [`_trim_silence()`](vllm_omni/model_executor/models/minicpm_o/minicpm_o_code2wav.py) 후처리 |
 | 한국어 TTS 실패 | 오디오 왜곡 | CosyVoice2 한국어 미학습 |
+
+자세한 내용: [`BENCHMARK.ko.md § 알려진 이슈`](examples/online_serving/minicpm_o/BENCHMARK.ko.md)
 
 ---
 
@@ -136,10 +138,8 @@ vllm serve openbmb/MiniCPM-o-4_5 --omni \
 
 - `NCCL_P2P_DISABLE=1` — RTX 3090 필수 (NVLink 없음)
 - `max_inflight: 1` — 동시 스테이지 메모리 OOM 방지 (upstream [#1387](https://github.com/vllm-project/vllm-omni/issues/1387))
-- `_find_tts_bound()` — MiniCPM-o는 Thinker 출력에 TTS 토큰을 인라인 삽입; 경계 감지 필요
-- `_ensure_list()` — vLLM `ConstantList` 타입은 `list()`로 올바르게 이터레이션되지 않음
-
-전체 구현 히스토리: [`.agents/context/contribution-journey.md`](.agents/context/contribution-journey.md)
+- [`_find_tts_bound()`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) — MiniCPM-o는 Thinker 출력에 TTS 토큰을 인라인 삽입; 경계 감지 필요
+- [`_ensure_list()`](vllm_omni/model_executor/stage_input_processors/minicpm_o.py) — vLLM `ConstantList` 타입은 `list()`로 올바르게 이터레이션되지 않음
 
 ---
 
