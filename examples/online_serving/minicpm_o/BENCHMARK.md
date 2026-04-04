@@ -149,7 +149,7 @@ Korean phonology requires separate fine-tuning.
 |-------|--------|:------:|
 | Stop token 6561 not generated | Audio fixed at ~20s | ⚠️ Separate issue |
 | Korean TTS failure | KO audio unusable | ⚠️ CosyVoice2 limitation |
-| `modality=="audio"` detection in client | Streaming chunks missed | ⚠️ Client bug |
+| `modality=="audio"` detection in client | Fixed: `getattr` default `None`, modality check before content guard, audio chunks accumulated | ✅ Fixed |
 
 ---
 

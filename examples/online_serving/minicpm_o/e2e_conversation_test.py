@@ -51,7 +51,7 @@ def get_whisper_model(model_size: str = "base"):
 
 def get_openai_client(api_base: str) -> "OpenAI":
     global _openai_client
-    if _openai_client is None or str(_openai_client._base_url) != api_base:
+    if _openai_client is None or not str(_openai_client._base_url).rstrip("/") == api_base.rstrip("/"):
         from openai import OpenAI
 
         _openai_client = OpenAI(base_url=api_base, api_key="unused")
@@ -128,6 +128,11 @@ class Speaker:
 
     async def synthesize(self, text: str, output_path: str) -> float:
         """TTS via edge-tts. Returns audio duration in seconds."""
+        if not text:
+            sr = 16000
+            sf.write(output_path, np.zeros(sr, dtype=np.float32), sr)
+            return 1.0
+
         import edge_tts
 
         comm = edge_tts.Communicate(text, self.voice)
@@ -167,8 +172,9 @@ class OmniSpeaker(Speaker):
     def generate_text(self, user_message: str) -> tuple[str, float]:
         """Generate text + audio via streaming omni API. Audio cached for synthesize().
 
-        Text tokens arrive as modality="text" chunks; the final audio chunk
-        arrives as modality="audio" with choices[0].delta.content = base64 WAV.
+        Text tokens arrive as modality="text" chunks; the audio arrives as a
+        single modality="audio" chunk with choices[0].delta.content = base64 WAV
+        (server sends audio_data[-1] as one chunk in stream=True mode).
         self._last_ttfp is set to the time of the first text token (true TTFP).
         """
         self.history.append({"role": "user", "content": user_message})
@@ -191,15 +197,12 @@ class OmniSpeaker(Speaker):
         for chunk in stream:
             if not chunk.choices:
                 continue
-            modality = getattr(chunk, "modality", "text")
+            modality = getattr(chunk, "modality", None)
             content = chunk.choices[0].delta.content
-            if not content:
-                continue
-            if modality == "audio":
-                # Final chunk: base64-encoded WAV from Code2Wav
+            if modality == "audio" and content:
+                # Single audio chunk: base64-encoded WAV from Code2Wav
                 self._pending_audio_b64 = content
-            else:
-                # Text token
+            elif modality == "text" and content:
                 if self._last_ttfp is None:
                     self._last_ttfp = time.perf_counter() - t0
                 text_chunks.append(content)
@@ -209,7 +212,8 @@ class OmniSpeaker(Speaker):
             self._last_ttfp = elapsed
 
         text = "".join(text_chunks).strip()
-        self.history.append({"role": "assistant", "content": text})
+        if text:
+            self.history.append({"role": "assistant", "content": text})
         return text, elapsed
 
     async def synthesize(self, text: str, output_path: str) -> float:
@@ -225,11 +229,18 @@ class OmniSpeaker(Speaker):
             sf.write(output_path, silence, sr)
             return 1.0
 
-        wav_bytes = base64.b64decode(self._pending_audio_b64)
-        data, sr = sf.read(io.BytesIO(wav_bytes))
-        sf.write(output_path, data, sr)
-        self._pending_audio_b64 = None
-        return len(data) / sr
+        try:
+            wav_bytes = base64.b64decode(self._pending_audio_b64)
+            data, sr = sf.read(io.BytesIO(wav_bytes))
+            sf.write(output_path, data, sr)
+            self._pending_audio_b64 = None
+            return len(data) / sr
+        except Exception as e:
+            print(f"  [WARN] Audio decode failed ({e}), generating 1s silence")
+            self._pending_audio_b64 = None
+            sr = 16000
+            sf.write(output_path, np.zeros(sr, dtype=np.float32), sr)
+            return 1.0
 
 
 # ---------------------------------------------------------------------------
@@ -348,8 +359,9 @@ class ConversationTest:
             )
             turns.append(turn)
 
-            # Next speaker gets this text as input
-            current_text = text
+            # Next speaker gets this text as input (keep previous if empty)
+            if text:
+                current_text = text
             print()
 
         return self._build_report(turns, time.perf_counter() - t_start)

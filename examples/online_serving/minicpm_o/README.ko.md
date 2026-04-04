@@ -64,5 +64,4 @@ python voicebench_runner.py
 - **Stop token 6561** Talker가 거의 생성하지 않음 → 오디오 ~20s 고정
   (별도 이슈로 추적; 완화: `_trim_silence()` 후처리)
 - **한국어 TTS**: CosyVoice2가 한국어 미학습 → 오디오 왜곡
-- **async_chunk TTFP**: 첫 오디오 지연 ~0.07s. 참고: 벤치마크 클라이언트의
-  `modality=="audio"` 감지가 스트리밍 청크를 놓칠 수 있음 — `e2e_conversation_test.py` 참조.
+- **async_chunk TTFP**: 첫 오디오 지연 ~0.07s.
