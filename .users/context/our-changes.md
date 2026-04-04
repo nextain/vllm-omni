@@ -40,6 +40,16 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | `models/registry.py` | MiniCPM-o 6개 엔트리 추가 |
 | `pyproject.toml` | `sentence-transformers`, `scikit-learn` 선택적 의존성 추가 |
 
+## 벤치마크 스크립트 (examples/online_serving/minicpm_o/)
+
+| 파일 | 수정 내용 (멀티패스 적대적 리뷰) |
+|------|--------------------------------|
+| `metrics/cjk_metrics.py` | CER 공식 수정 (SequenceMatcher→edit_distance/len(ref)); `_character_overlap` set→Counter multiset; CER 하한 `max(0.0,...)`; `_sentence_model` 모듈 레벨 캐시 |
+| `metrics/conversation_quality.py` | `knowledge_retention` 루프 수정; `_character_overlap` Counter multiset; `tts_speech_ratio` `overall_quality` 가중치 제거; L25 docstring 수정 |
+| `conversation_benchmark.py` | 출력 레이블: `"Avg STT CER (lower=better)"` |
+| `language_test.py` | `stt_cer`/`stt_word_accuracy` 키 분리; `evaluate_conversation`에 `stt_text` + `response_time` 전달; opener 미리보기 조건부 말줄임표 |
+| `voicebench_runner.py` | `SampleResult` 필드명 수정; `list_count` 빈 응답 처리; API 예외 처리; `CATEGORIES` `deepcopy`로 전역 상태 보호; `list_count` 쉼표 필터 빈 토큰 제거 |
+
 ---
 
 ## 아키텍처: 3단계 파이프라인
@@ -110,6 +120,11 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | stage_input_processors/minicpm_o.py | ✅ | 10패스 적대적 리뷰, 2연속 클린 |
 | registry.py | ✅ | 추가만 |
 | 오디오 입력 (MiniCPMO processor) | ⚠️ | 2-GPU 텍스트→오디오 경로 미검증 |
+| metrics/cjk_metrics.py | ✅ | 멀티패스 리뷰, 메트릭 공식 수정 완료 |
+| metrics/conversation_quality.py | ✅ | 멀티패스 리뷰, knowledge_retention + 가중치 수정 완료 |
+| conversation_benchmark.py | ✅ | 레이블 수정 |
+| language_test.py | ✅ | stt_cer/word_accuracy 분리, evaluate_conversation 수정 |
+| voicebench_runner.py | ✅ | SampleResult 필드명, 예외 처리, CATEGORIES deepcopy |
 
 ---
 

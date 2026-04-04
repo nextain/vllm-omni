@@ -46,14 +46,21 @@ def cer(reference: str, hypothesis: str) -> float:
     ref = unicode_normalize(reference)
     hyp = unicode_normalize(hypothesis)
 
-    # Calculate edit distance
-    matcher = SequenceMatcher(None, ref, hyp)
-    ratio = matcher.ratio()
-
-    # CER = 1 - similarity_ratio
     if len(ref) == 0:
         return 0.0
-    return 1.0 - ratio
+
+    # Standard CER = edit_distance(ref, hyp) / len(ref)
+    # Using SequenceMatcher to derive edit distance:
+    # ratio = 2*matches / (len(ref) + len(hyp))
+    # matches = ratio * (len(ref) + len(hyp)) / 2
+    # edit_distance ≈ len(ref) + len(hyp) - 2*matches
+    matcher = SequenceMatcher(None, ref, hyp)
+    matches = matcher.ratio() * (len(ref) + len(hyp)) / 2
+    edit_distance = len(ref) + len(hyp) - 2 * matches
+    return max(0.0, min(edit_distance / len(ref), 1.0))
+
+
+_sentence_model = None  # Module-level cache to avoid reloading on every call
 
 
 def semantic_similarity(original: str, transcript: str) -> float:
@@ -70,6 +77,7 @@ def semantic_similarity(original: str, transcript: str) -> float:
     Returns:
         Cosine similarity between 0.0 (no similarity) and 1.0 (identical)
     """
+    global _sentence_model
     try:
         from sentence_transformers import SentenceTransformer
         from sklearn.metrics.pairwise import cosine_similarity
@@ -77,22 +85,28 @@ def semantic_similarity(original: str, transcript: str) -> float:
         # Fallback: use character overlap for languages without models
         return _character_overlap_similarity(original, transcript)
 
-    model = SentenceTransformer('all-MiniLM-L6-v2')
-    emb1 = model.encode(original)
-    emb2 = model.encode(transcript)
+    if _sentence_model is None:
+        _sentence_model = SentenceTransformer('all-MiniLM-L6-v2')
+    emb1 = _sentence_model.encode(original)
+    emb2 = _sentence_model.encode(transcript)
     similarity = cosine_similarity([emb1], [emb2])[0][0]
     return float(similarity)
 
 
 def _character_overlap_similarity(original: str, transcript: str) -> float:
-    """Fallback: character-level overlap similarity."""
-    ref = set(unicode_normalize(original))
-    hyp = set(unicode_normalize(transcript))
+    """Fallback: character-level overlap similarity (Jaccard on character bags)."""
+    ref = list(unicode_normalize(original))
+    hyp = list(unicode_normalize(transcript))
     if not ref:
         return 1.0
     if not hyp:
         return 0.0
-    return len(ref & hyp) / len(ref)
+    # Use multiset intersection: count matching chars up to min occurrence
+    from collections import Counter
+    ref_counts = Counter(ref)
+    hyp_counts = Counter(hyp)
+    intersection = sum((ref_counts & hyp_counts).values())
+    return intersection / len(ref)
 
 
 def word_accuracy(original: str, transcript: str) -> float:

@@ -315,7 +315,7 @@ class ConversationBenchmark:
         )
         print(f"\n  Scenario metrics:")
         print(f"    Avg response time:           {metrics['avg_response_time_s']:.1f}s")
-        print(f"    Avg STT accuracy (CER):     {metrics['avg_stt_cer']:.0%}")
+        print(f"    Avg STT CER (lower=better): {metrics['avg_stt_cer']:.0%}")
         print(f"    Avg STT semantic similarity: {metrics['avg_stt_semantic_similarity']:.0%}")
         print(f"    Avg text length:             {metrics['avg_text_length_words']:.1f} words")
 

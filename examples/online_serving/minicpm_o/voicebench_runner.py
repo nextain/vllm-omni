@@ -369,7 +369,9 @@ def score_ifeval(prompt: str, response: str, instructions: list[str]) -> tuple[f
     if m:
         expected = int(m.group(1))
         lines = [l.strip() for l in response.strip().split("\n") if l.strip()]
-        commas = len(response.split(","))
+        # Count comma-separated items only when response has actual content tokens
+        comma_parts = [p.strip() for p in response.split(",") if p.strip()] if response.strip() else []
+        commas = len(comma_parts)
         count = max(len(lines), commas)
         if count >= expected:
             return 1.0, "pass"
@@ -479,7 +481,19 @@ def run_inference(
             )
             response = resp.choices[0].message.content or ""
         except Exception as e:
-            response = f"[ERROR: {e}]"
+            elapsed = time.perf_counter() - t0
+            print(f"✗ ({elapsed:.1f}s) ERROR: {e}")
+            results.append(SampleResult(
+                category=category,
+                dataset=sample.get("type", "unknown"),
+                sample_id=i,
+                prompt=sample["prompt"],
+                response=f"[ERROR: {e}]",
+                response_time_s=elapsed,
+                score=0.0,
+                score_label="error",
+            ))
+            continue
 
         elapsed = time.perf_counter() - t0
         score, label = score_sample(sample, response)
@@ -674,9 +688,10 @@ def main():
 
     reports = []
     for cat in args.categories:
-        cfg = CATEGORIES[cat]
+        import copy
+        cfg = copy.deepcopy(CATEGORIES[cat])
 
-        # Override n_samples if specified
+        # Override n_samples if specified (on local copy, not global state)
         if args.n_samples is not None:
             for ds in cfg["datasets"]:
                 ds["n_samples"] = args.n_samples

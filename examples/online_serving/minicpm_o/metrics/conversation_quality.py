@@ -22,7 +22,7 @@ class ConversationQualityMetrics:
     """Comprehensive conversation quality metrics."""
 
     # STT/Audio Input Quality
-    stt_accuracy: float  # CER (CJK) or WER (English)
+    stt_accuracy: float  # 1.0 - CER (CJK) or 1.0 - WER (English); higher = better
     stt_semantic_similarity: float  # Embedding-based meaning match
 
     # TTS/Audio Output Quality
@@ -142,15 +142,21 @@ class ConversationEvaluator:
         return min(1.0, overlap + 0.3)  # 0.3 baseline for new topics
 
     def _character_overlap(self, text1: str, text2: str) -> float:
-        """Fallback character overlap for semantic similarity."""
+        """Fallback character overlap for semantic similarity (multiset)."""
+        from collections import Counter
         from .cjk_metrics import unicode_normalize
 
-        chars1 = set(unicode_normalize(text1))
-        chars2 = set(unicode_normalize(text2))
+        ref = list(unicode_normalize(text1))
+        hyp = list(unicode_normalize(text2))
 
-        if not chars1:
+        if not ref:
             return 1.0
-        return len(chars1 & chars2) / len(chars1)
+        if not hyp:
+            return 0.0
+        ref_counts = Counter(ref)
+        hyp_counts = Counter(hyp)
+        intersection = sum((ref_counts & hyp_counts).values())
+        return intersection / len(ref)
 
     def calculate_knowledge_retention(
         self,
@@ -292,12 +298,13 @@ class ConversationEvaluator:
                 )
                 relevance_scores.append(rel)
 
-        # Knowledge retention (look for recall patterns)
+        # Knowledge retention: compare each turn with the most recent prior
+        # turn by the same speaker (skip if no prior same-role turn exists)
         knowledge_scores = []
-        for i in range(len(turns) - 2):
-            later = turns[i+2]
-            # Check if later turn references earlier facts
-            for j in range(i+1):
+        for i in range(2, len(turns)):
+            later = turns[i]
+            # Find most recent prior turn with same role
+            for j in range(i - 1, -1, -1):
                 if turns[j]['role'] == later['role']:
                     fact = turns[j]['text']
                     knowledge = self.calculate_knowledge_retention(
@@ -320,21 +327,21 @@ class ConversationEvaluator:
             overall_quality=0.0,  # Weighted average below
         )
 
-        # Overall quality: weighted combination
+        # Overall quality: weighted combination (text/semantic dimensions only)
+        # tts_speech_ratio (VAD ratio) excluded — measures speech frame fraction,
+        # not model quality; would penalize slower or shorter responses unfairly.
         weights = {
-            'stt_accuracy': 0.25,
-            'relevance': 0.25,
-            'coherence': 0.20,
+            'stt_accuracy': 0.30,
+            'relevance': 0.30,
+            'coherence': 0.25,
             'knowledge_retention': 0.15,
-            'tts_quality': 0.15,
         }
 
         metrics.overall_quality = (
             weights['stt_accuracy'] * metrics.stt_accuracy +
             weights['relevance'] * metrics.relevance +
             weights['coherence'] * metrics.coherence +
-            weights['knowledge_retention'] * metrics.knowledge_retention +
-            weights['tts_quality'] * metrics.tts_speech_ratio
+            weights['knowledge_retention'] * metrics.knowledge_retention
         )
 
         return metrics

@@ -90,7 +90,7 @@ async def test_language(
 
     # Create speakers
     omni = OmniSpeaker(
-        name=f"MiniCPM-o",
+        name="MiniCPM-o",
         system_prompt=config["system_prompt"],
         api_base=api_base,
     )
@@ -107,7 +107,9 @@ async def test_language(
         partner.history = []
         current_text = scenario["opener"]
 
-        print(f"\n  Scenario {si+1}: {scenario['opener'][:50]}...")
+        opener_preview = scenario['opener'][:50]
+        suffix = '...' if len(scenario['opener']) > 50 else ''
+        print(f"\n  Scenario {si+1}: {opener_preview}{suffix}")
 
         for i in range(scenario["n_turns"]):
             if i % 2 == 0:
@@ -124,12 +126,13 @@ async def test_language(
             # STT verification with CJK-aware metrics
             stt_text, stt_logprob = monitor.transcribe(audio_path)
             cjk_metrics = calculate_cjk_metrics(text, stt_text, lang)
-            stt_acc = cjk_metrics["cer"] if lang in ["zh", "ko"] else cjk_metrics["word_accuracy"]
+            stt_cer_val = cjk_metrics["cer"]
+            stt_word_acc = cjk_metrics.get("word_accuracy", 0.0)
             semantic_sim = cjk_metrics["semantic_similarity"]
 
             print(f"    [{role}] {text[:60]}{'...' if len(text) > 60 else ''}")
             print(f"     STT: {stt_text[:60]}{'...' if len(stt_text) > 60 else ''}")
-            print(f"     CER: {stt_acc:.0%} | Semantic: {semantic_sim:.0%} | {cjk_metrics['notes']}")
+            print(f"     CER: {stt_cer_val:.0%} | Semantic: {semantic_sim:.0%} | {cjk_metrics['notes']}")
             print(f"     Audio: {audio_dur:.1f}s, Resp: {resp_time:.1f}s")
 
             results.append({
@@ -138,9 +141,9 @@ async def test_language(
                 "role": role,
                 "text": text,
                 "stt_text": stt_text,
-                "stt_accuracy": stt_acc,
+                "stt_cer": stt_cer_val,          # CER: lower is better (0=perfect)
+                "stt_word_accuracy": stt_word_acc, # EN only: higher is better (1=perfect)
                 "stt_semantic_similarity": semantic_sim,
-                "stt_cer": cjk_metrics["cer"],
                 "stt_notes": cjk_metrics["notes"],
                 "stt_logprob": stt_logprob,
                 "audio_duration_s": audio_dur,
@@ -157,7 +160,8 @@ async def test_language(
     # Conversation quality evaluation
     evaluator = ConversationEvaluator()
     conversation_metrics = evaluator.evaluate_conversation(
-        [{"role": r["role"], "text": r["text"]} for r in results]
+        [{"role": r["role"], "text": r["text"], "stt_text": r["stt_text"],
+          "response_time": r["response_time_s"]} for r in results]
     )
 
     # Calculate summary with new metrics
@@ -166,8 +170,8 @@ async def test_language(
         "language_name": config["name"],
         "omni_turns": len(omni_results),
         "partner_turns": len(partner_results),
-        "omni_avg_stt_accuracy": float(np.mean([r["stt_accuracy"] for r in omni_results])) if omni_results else 0,
-        "partner_avg_stt_accuracy": float(np.mean([r["stt_accuracy"] for r in partner_results])) if partner_results else 0,
+        "omni_avg_stt_cer": float(np.mean([r["stt_cer"] for r in omni_results])) if omni_results else 0,
+        "partner_avg_stt_cer": float(np.mean([r["stt_cer"] for r in partner_results])) if partner_results else 0,
         "omni_avg_stt_semantic_similarity": float(np.mean([r["stt_semantic_similarity"] for r in omni_results])) if omni_results else 0,
         "partner_avg_stt_semantic_similarity": float(np.mean([r["stt_semantic_similarity"] for r in partner_results])) if partner_results else 0,
         "omni_avg_response_time": float(np.mean([r["response_time_s"] for r in omni_results])) if omni_results else 0,
@@ -182,9 +186,9 @@ async def test_language(
     }
 
     print(f"\n  --- {config['name']} Summary ---")
-    print(f"  Omni STT accuracy:          {summary['omni_avg_stt_accuracy']:.0%}")
+    print(f"  Omni STT CER (lower=better):  {summary['omni_avg_stt_cer']:.0%}")
     print(f"  Omni STT semantic similarity: {summary['omni_avg_stt_semantic_similarity']:.0%}")
-    print(f"  Partner STT accuracy:         {summary['partner_avg_stt_accuracy']:.0%}")
+    print(f"  Partner STT CER:              {summary['partner_avg_stt_cer']:.0%}")
     print(f"  Omni avg resp time:           {summary['omni_avg_response_time']:.1f}s")
     print(f"  Omni avg audio dur:           {summary['omni_avg_audio_duration']:.1f}s")
     print(f"\n  --- Conversation Quality ---")
@@ -227,11 +231,11 @@ async def main():
     print(f"\n{'='*60}")
     print(f"  LANGUAGE COMPARISON")
     print(f"{'='*60}")
-    print(f"  {'Language':<15s} {'Omni STT%':>10s} {'Partner STT%':>13s} {'Audio':>8s}")
+    print(f"  {'Language':<15s} {'Omni CER':>10s} {'Partner CER':>13s} {'Audio':>8s}")
     print(f"  {'-'*50}")
     for r in all_results:
-        print(f"  {r['language_name']:<15s} {r['omni_avg_stt_accuracy']:>9.0%} "
-              f"{r['partner_avg_stt_accuracy']:>12.0%} {r['omni_avg_audio_duration']:>6.1f}s")
+        print(f"  {r['language_name']:<15s} {r['omni_avg_stt_cer']:>9.0%} "
+              f"{r['partner_avg_stt_cer']:>12.0%} {r['omni_avg_audio_duration']:>6.1f}s")
 
     # Save comparison
     comparison_path = output_dir / "comparison.json"

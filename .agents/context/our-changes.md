@@ -42,6 +42,16 @@ All paths relative to `vllm_omni/model_executor/`:
 | `models/registry.py` | Added 6 MiniCPM-o model entries |
 | `pyproject.toml` | Added `sentence-transformers`, `scikit-learn` optional deps |
 
+## Benchmark Scripts (examples/online_serving/minicpm_o/)
+
+| File | Changes (multi-pass adversarial review) |
+|------|-----------------------------------------|
+| `metrics/cjk_metrics.py` | CER formula fixed (SequenceMatcher → edit_distance/len(ref)); `_character_overlap` set→Counter multiset; CER lower-bound `max(0.0,...)`; `_sentence_model` module-level cache |
+| `metrics/conversation_quality.py` | `knowledge_retention` loop fixed (`range(i+1)`→`range(2,len)` + reverse same-role search); `_character_overlap` Counter multiset; `tts_speech_ratio` removed from `overall_quality` weights; L25 docstring corrected |
+| `conversation_benchmark.py` | Print label: `"Avg STT CER (lower=better)"` |
+| `language_test.py` | `stt_cer`/`stt_word_accuracy` key split (was mixed-direction); `evaluate_conversation` receives `stt_text` + `response_time`; opener preview ellipsis conditional |
+| `voicebench_runner.py` | `SampleResult` field names fixed (`label`→`score_label`, `elapsed_s`→`response_time_s`); `list_count` empty response guard; API exception handling (score=0.0 + continue); `CATEGORIES` `deepcopy` to prevent global mutate; `list_count` comma filter strips empty tokens |
+
 ---
 
 ## Architecture: 3-Stage Pipeline
@@ -112,6 +122,11 @@ Input (text + image/audio)
 | stage_input_processors/minicpm_o.py | ✅ | 10-pass adversarial review, 2 consecutive clean |
 | registry.py | ✅ | Additive only |
 | Audio input (MiniCPMO processor) | ⚠️ | Unvalidated on 2-GPU text→audio path |
+| metrics/cjk_metrics.py | ✅ | Multi-pass review, metric formula fixes applied |
+| metrics/conversation_quality.py | ✅ | Multi-pass review, knowledge_retention + weights fixed |
+| conversation_benchmark.py | ✅ | Label correction |
+| language_test.py | ✅ | stt_cer/word_accuracy separation, evaluate_conversation fix |
+| voicebench_runner.py | ✅ | SampleResult fields, exception handling, CATEGORIES deepcopy |
 
 ---
 
