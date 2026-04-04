@@ -57,6 +57,8 @@ dev = [
     "mistune>=3.2.0", # for example tests
     "edge-tts>=6.1.9", # for minicpm_o conversation examples
     "openai>=1.0.0", # for minicpm_o conversation examples
+    "sentence-transformers>=3.0.0", # for minicpm_o semantic similarity metrics (optional)
+    "scikit-learn>=1.4.0", # for minicpm_o cosine similarity computation (optional)
 ]
 
 demo = [

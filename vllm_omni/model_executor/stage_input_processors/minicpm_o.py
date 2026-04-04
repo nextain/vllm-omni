@@ -12,6 +12,20 @@ from vllm.platforms import current_platform
 from vllm_omni.inputs.data import OmniTokensPrompt
 
 
+def _ensure_list(x: Any) -> list:
+    """Convert ConstantList / tensor-like to a plain Python list.
+
+    vLLM may wrap token ID sequences in a ConstantList (with a ``_x`` attribute).
+    Based on qwen3_omni._ensure_list; differs in that we always convert to a true
+    Python list (``list(x)``) rather than returning non-list types as-is.
+    """
+    if hasattr(x, "_x"):
+        return list(x._x)
+    if isinstance(x, list):
+        return x
+    return list(x)
+
+
 def _validate_stage_inputs(stage_list, engine_input_source):
     if not engine_input_source:
         raise ValueError("engine_input_source cannot be empty")
@@ -80,46 +94,64 @@ def thinker2talker_async_chunk(
     request: Any,
     is_finished: bool = False,
 ) -> dict[str, Any] | None:
-    """Async chunk: stream Thinker hidden states to Talker as tokens are generated.
+    """Async chunk: accumulate Thinker hidden states until generation is done.
+
+    Each forward step, vLLM's model runner slices ``pooling_output["thinker_hidden_states"]``
+    to only the tokens processed in that step (1 token per decode step).  We must
+    concatenate these slices across all steps to reconstruct the full-sequence hidden
+    states that the Talker's ``talker_preprocess`` expects.
 
     MiniCPM-o differs from Qwen3-Omni in two ways:
     1. Hidden states are under a single ``thinker_hidden_states`` key
-       (not split into prefill/decode layers "0" / "24").
+       (Qwen3 splits into prefill layer "0" and decode layer "24").
     2. Only the TTS-relevant portion (between <|tts_bos|> and <|tts_eos|>)
        should be passed to the Talker — ``_find_tts_bound()`` handles this.
 
-    chunk_id == 0 (prefill):
-        - Accumulate hidden states; do not send until is_finished
-          because tts_bound can only be determined after Thinker completes.
-        - Returns None until finished (sequential behaviour matches sync mode).
+    Accumulation strategy (matches Qwen3's ``request_payload`` pattern):
+      - Each step: append this step's hidden states into ``request_payload[request_id]``.
+      - Returns None until ``is_finished=True`` (Talker needs the full slice).
+      - When finished: concatenate all accumulated slices, apply tts_bound, emit.
 
-    chunk_id > 0 (decode):
-        - Not used in current implementation (MiniCPM-o Talker processes the
-          full tts-bound slice at once, same as sync mode).
-
-    When is_finished=True:
-        - Apply tts_bound filtering and emit the final payload.
+    Known limitation: chunked prefill (where ``is_finished=False`` but
+    ``chunk_id==0`` spans multiple forward passes) will accumulate prefill
+    hidden states alongside decode hidden states without distinction.
+    This is safe when ``enable_prefix_caching=false`` and chunked prefill is
+    not active (current configuration).  If chunked prefill is ever enabled,
+    a ``put_req_chunk[request_id]`` check (as in Qwen3) would be needed.
 
     Args:
-        transfer_manager: Per-request state manager.
-        pooling_output: Current Thinker output dict with ``thinker_hidden_states``.
+        transfer_manager: Per-request state manager (holds ``request_payload`` dict).
+        pooling_output: Current-step Thinker output (``thinker_hidden_states`` = this step only).
         request: vLLM request object (provides token IDs).
         is_finished: Whether Thinker generation is complete.
 
     Returns:
-        dict payload for Talker, or None if not ready yet.
+        dict payload for Talker when finished, or None while accumulating.
     """
     request_id = request.external_req_id
 
-    # Accumulate hidden states until Thinker is done.
-    # MiniCPM-o's Talker conditioning requires the full tts-bound slice —
-    # we cannot send partial data as Qwen3 does, because tts_bound is only
-    # known after all tokens are generated.
+    # Accumulate this step's hidden states.
+    # Each step provides only the tokens processed in that step (typically 1 for decode).
+    # We concatenate across all steps to reconstruct the full-sequence hidden states.
+    new_hidden = pooling_output.get("thinker_hidden_states")
+    if new_hidden is not None:
+        new_hidden_cpu = new_hidden.detach().float().cpu()
+        if request_id not in transfer_manager.request_payload:
+            transfer_manager.request_payload[request_id] = new_hidden_cpu
+        else:
+            transfer_manager.request_payload[request_id] = torch.cat(
+                [transfer_manager.request_payload[request_id], new_hidden_cpu], dim=0
+            )
+
     if not is_finished:
         return None
 
-    # Thinker finished — extract hidden states and apply tts_bound filter.
-    thinker_hidden_states = pooling_output.get("thinker_hidden_states")
+    # Thinker finished — retrieve accumulated hidden states.
+    # If new_hidden was not None above, it was stored in request_payload, so pop always
+    # returns a value.  The None branch is only reachable if new_hidden was also None
+    # (e.g. model emitted no thinker_hidden_states on the final step), in which case
+    # we have no data to send and must skip this request.
+    thinker_hidden_states = transfer_manager.request_payload.pop(request_id, None)
     if thinker_hidden_states is None:
         return None
 
@@ -130,15 +162,16 @@ def thinker2talker_async_chunk(
     tts_eos_id = 151704
 
     # Reconstruct full token sequence (prompt + generated).
+    # Use _ensure_list() to handle vLLM's ConstantList wrapper correctly.
     all_token_ids: list[int] = []
     try:
-        prompt_ids = list(request.prompt_token_ids)
-        output_ids = list(request.output_token_ids)
+        prompt_ids = _ensure_list(request.prompt_token_ids)
+        output_ids = _ensure_list(request.output_token_ids)
         all_token_ids = prompt_ids + output_ids
     except AttributeError:
         # Fallback: use whatever is available on the request object.
         try:
-            all_token_ids = list(request.all_token_ids)
+            all_token_ids = _ensure_list(request.all_token_ids)
         except AttributeError:
             pass
 
@@ -158,16 +191,21 @@ def thinker2talker_async_chunk(
     # Align lengths.
     num_tts_tokens = min(len(tts_token_ids), tts_hidden.shape[0])
     if num_tts_tokens == 0:
-        # Fallback: use full generated portion.
+        # Fallback: use generated portion (prompt excluded).
         try:
-            prompt_len = len(list(request.prompt_token_ids))
-            gen_ids = list(request.output_token_ids)
+            prompt_len = len(_ensure_list(request.prompt_token_ids))
+            gen_ids = _ensure_list(request.output_token_ids)
             gen_start = min(prompt_len, hidden_len)
             gen_end = min(prompt_len + len(gen_ids), hidden_len)
             if gen_end > gen_start:
                 tts_hidden = thinker_hidden_states[gen_start:gen_end]
                 tts_token_ids = gen_ids[: gen_end - gen_start]
                 num_tts_tokens = len(tts_token_ids)
+            else:
+                # Last resort: use all accumulated hidden states
+                num_tts_tokens = min(len(all_token_ids), hidden_len) if all_token_ids else hidden_len
+                tts_token_ids = all_token_ids[:num_tts_tokens]
+                tts_hidden = thinker_hidden_states[:num_tts_tokens]
         except AttributeError:
             num_tts_tokens = hidden_len
             tts_hidden = thinker_hidden_states
@@ -179,7 +217,7 @@ def thinker2talker_async_chunk(
     return {
         # Keys match MiniCPM-o talker_preprocess expectations (same as sync mode).
         "thinker_token_ids": torch.tensor(tts_token_ids, dtype=torch.long),
-        "thinker_hidden_states": tts_hidden.detach().float().cpu(),
+        "thinker_hidden_states": tts_hidden,
         "finished": torch.tensor(True, dtype=torch.bool),
     }
 
@@ -338,10 +376,10 @@ def talker2code2wav(
         # directly in output.token_ids (flat 1D).  This differs from
         # qwen3_omni which extracts from multimodal_output["code_predictor_codes"]
         # because qwen3 uses multi-layer RVQ requiring transpose+reshape.
-        # Strip trailing stop token (vllm includes stop_token_ids in output).
-        codec_codes = list(output.token_ids[:-1]) if output.token_ids else []
+        # Filter stop token by value (6561) rather than unconditional [:-1] trim,
+        # so that codec frames are preserved when max_tokens is reached without EOS.
+        codec_codes = [t for t in output.token_ids if t != 6561] if output.token_ids else []
 
-        # Debug: Log codec tokens generated by Talker
         code2wav_inputs.append(
             OmniTokensPrompt(
                 prompt_token_ids=codec_codes,
@@ -387,16 +425,16 @@ def talker2code2wav_async_chunk(
     # Use is_finished parameter authoritatively; avoid racing against request state.
     finished = bool(is_finished)
 
-    # Initialize per-request token storage, cursor, and emitted-length tracker.
-    if not hasattr(transfer_manager, "code_prompt_token_ids"):
-        transfer_manager.code_prompt_token_ids = {}
+    # code_prompt_token_ids is initialized as defaultdict(list) by the framework
+    # (ChunkTransferAdapter.__init__), so no hasattr check needed.
+    # _talker_token_cursor and _talker_emitted_len are MiniCPM-o-specific state;
+    # initialize them lazily if not present.
     if not hasattr(transfer_manager, "_talker_token_cursor"):
         transfer_manager._talker_token_cursor = {}
     if not hasattr(transfer_manager, "_talker_emitted_len"):
         transfer_manager._talker_emitted_len = {}
 
-    if request_id not in transfer_manager.code_prompt_token_ids:
-        transfer_manager.code_prompt_token_ids[request_id] = []
+    if request_id not in transfer_manager._talker_token_cursor:
         transfer_manager._talker_token_cursor[request_id] = 0
         transfer_manager._talker_emitted_len[request_id] = 0
 
@@ -404,7 +442,7 @@ def talker2code2wav_async_chunk(
     # pooling_output["hidden"] contains raw hidden states, NOT sampled token ids.
     # Cumulative output is in request.output_token_ids; read only the delta via cursor.
     try:
-        all_output_ids = list(request.output_token_ids)
+        all_output_ids = _ensure_list(request.output_token_ids)
     except AttributeError:
         all_output_ids = []
 
@@ -429,11 +467,22 @@ def talker2code2wav_async_chunk(
 
     if pending <= 0:
         if finished:
-            # Clean up to avoid memory leak across requests
-            transfer_manager.code_prompt_token_ids.pop(request_id, None)
+            # Clean up our custom-state keys (framework handles code_prompt_token_ids
+            # via cleanup_sender; we own _talker_token_cursor and _talker_emitted_len)
             transfer_manager._talker_token_cursor.pop(request_id, None)
             transfer_manager._talker_emitted_len.pop(request_id, None)
-        # No pending tokens — nothing to emit (matches Qwen3 pattern)
+            # Return an empty finished payload so the framework proceeds to
+            # cleanup_sender (line 244 in chunk_transfer_adapter.py).
+            # Returning None would cause early return at line 230 and skip cleanup,
+            # leaking put_req_chunk / request_payload / code_prompt_token_ids.
+            # MiniCPMOCode2Wav.forward() handles empty codes gracefully (returns zeros).
+            # Matches MIMO-Audio's _make_finished_sentinel() pattern.
+            return {
+                "code_predictor_codes": [],
+                "left_context_size": 0,
+                "finished": torch.tensor(True, dtype=torch.bool),
+            }
+        # No pending tokens and not finished — nothing to emit yet
         return None
 
     # Emit when we have at least chunk_size pending tokens, or when finished.
@@ -456,8 +505,7 @@ def talker2code2wav_async_chunk(
     transfer_manager._talker_emitted_len[request_id] = current_length
 
     if finished:
-        # Clean up after final chunk
-        transfer_manager.code_prompt_token_ids.pop(request_id, None)
+        # Clean up our custom-state keys (framework handles code_prompt_token_ids)
         transfer_manager._talker_token_cursor.pop(request_id, None)
         transfer_manager._talker_emitted_len.pop(request_id, None)
 

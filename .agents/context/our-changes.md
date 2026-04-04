@@ -1,45 +1,127 @@
-# 우리가 수정한 것 — 현재 상태
+# Our Changes — vllm-omni Fork (Nextain)
 
-## 브랜치: feat/minicpm-o (upstream/main 기반)
+## Branch: feat/minicpm-o (rebased from upstream/main)
 
-### 추가한 파일
-| 파일 (vllm_omni/model_executor/ 기준) | 목적 |
-|------|------|
-| models/minicpm_o/__init__.py | 모듈 export |
-| models/minicpm_o/configuration_minicpmo.py | Config 클래스 (커스텀, transformers에 없음) |
-| models/minicpm_o/minicpm_o.py | 통합 엔트리 + talker_preprocess |
-| models/minicpm_o/minicpm_o_thinker.py | Thinker (Idefics2 vision + Whisper audio + Qwen3 LLM) |
-| models/minicpm_o/minicpm_o_talker.py | Talker (MiniCPMTTS Llama AR) |
-| models/minicpm_o/minicpm_o_code2wav.py | Code2Wav (CosyVoice2 + HiFi-GAN) |
-| stage_input_processors/minicpm_o.py | thinker2talker + talker2code2wav |
-| stage_configs/minicpmo.yaml | 2-GPU config (현재 미작동 — #1387) |
-| stage_configs/minicpmo_24gb.yaml | 24GB 단일 GPU config (max_model_len 제한) |
+## Purpose
 
-### 수정한 파일
-| 파일 | 변경 |
-|------|------|
-| models/registry.py | MiniCPM-o 6개 엔트리 추가 |
+This fork adds MiniCPM-o 4.5 omni model support to vllm-omni as an upstream contribution.
 
-### 신뢰도 상태
+**Why**: Naia OS (nextain/naia-os) requires local omni model inference. MiniCPM-o 4.5 is the
+primary target for Naia hardware tiers (48 GB dual-GPU, 32 GB single-GPU setups). By contributing
+upstream, the work benefits the broader open-source community while keeping Naia OS aligned with
+the official framework.
 
-| 항목 | 상태 | 비고 |
-|------|:----:|------|
-| 모델 코드 (thinker/talker/code2wav) | ✅ | 2x RTX 3090 E2E 통과 (텍스트+오디오 출력) |
-| stage_configs YAML (minicpmo.yaml) | ✅ | 2x RTX 3090 검증, 코드 리뷰 Pass 1-6 완료 |
-| stage_configs YAML (minicpmo_24gb.yaml) | ⚠️ | 24GB 단일 GPU, chat_template_kwargs 추가됨 |
-| stage_input_processors/minicpm_o.py | ⚠️ | 코드 리뷰 Pass 1-6 완료, TTS conditioning 미해결 |
-| registry | ✅ | 단순 추가 |
-| audio input (MiniCPMO processor) | ⚠️ | 2-GPU에서 미검증 (text→audio만 확인) |
-| embed_multimodal | ✅ | max_num_batched_tokens 조정으로 profile_run 통과 |
-| Code2Wav CPU load + lazy GPU | ✅ | 2-GPU에서 정상 작동 확인 |
-| 디바이스 격리 (CUDA_VISIBLE_DEVICES) | ✅ | 진단 스크립트 + 실제 서버 모두 정상 |
+**AI-native OSS experiment**: This entire contribution — from upstream pattern analysis through
+implementation to headless adversarial review — was produced by an AI coding agent (Claude)
+following an issue-driven development workflow. The methodology, not just the code, is being
+validated here.
 
-### 주요 교훈
-1. **upstream 기본 사용법 먼저** — stage_configs, process:true, multi-GPU 동작을 모른 채 코드 작성
-2. **24GB에서 E2E 했다고 "됐다"고 판단** — 실제 사용 환경 (2-GPU, Naia Shell)에서 안 됨
-3. **NCCL_P2P_DISABLE=1** — RTX 3090 TP=2에 필수 (vllm-project/vllm#308, NVLink 없는 GPU 간 P2P 통신 비활성)
-4. **process: true** — Qwen2.5-Omni 공식 config에 기본 포함, 우리 config에는 누락
-5. **디바이스 격리는 정상** — 이전 "업스트림 버그" 판정은 잘못됨. 실제 원인은 gpu_memory_utilization/max_num_batched_tokens 설정
-6. **CosyVoice2 flow model ~15GB** — Code2Wav가 예상보다 훨씬 큰 GPU 메모리 필요
-7. **2x RTX 3090 메모리 분배**: Thinker(0.88) + Talker(0.1) + Code2Wav(0.02). Talker KV를 최소화해야 Code2Wav가 들어감
-8. **max_num_batched_tokens** — vision profile 크기에 직결. 24GB에서 2048이 한계
+---
+
+## Files Added
+
+All paths relative to `vllm_omni/model_executor/`:
+
+| File | Purpose |
+|------|---------|
+| `models/minicpm_o/__init__.py` | Module exports |
+| `models/minicpm_o/configuration_minicpmo.py` | Config class (custom — not in transformers) |
+| `models/minicpm_o/minicpm_o.py` | Unified entry point + talker_preprocess |
+| `models/minicpm_o/minicpm_o_thinker.py` | Thinker: Idefics2 vision + Whisper audio + Qwen3 LLM |
+| `models/minicpm_o/minicpm_o_talker.py` | Talker: MiniCPMTTS Llama AR codec generator |
+| `models/minicpm_o/minicpm_o_code2wav.py` | Code2Wav: CosyVoice2 flow + HiFi-GAN vocoder |
+| `stage_input_processors/minicpm_o.py` | thinker2talker, talker2code2wav (sync + async_chunk) |
+| `stage_configs/minicpmo.yaml` | Single-GPU 24 GB reference config |
+| `stage_configs/minicpmo_48gb_2gpu.yaml` | 2× RTX 3090 (48 GB total) config |
+| `stage_configs/minicpmo_async_chunk.yaml` | async_chunk streaming config (TTFP optimization) |
+
+## Files Modified
+
+| File | Change |
+|------|--------|
+| `models/registry.py` | Added 6 MiniCPM-o model entries |
+| `pyproject.toml` | Added `sentence-transformers`, `scikit-learn` optional deps |
+
+---
+
+## Architecture: 3-Stage Pipeline
+
+```
+Input (text + image/audio)
+  → Stage 0: Thinker  (GPU 0, LLM AR)  → hidden_states
+  → Stage 1: Talker   (GPU 1, TTS AR)  → codec token IDs
+  → Stage 2: Code2Wav (GPU 1, vocoder) → PCM audio
+```
+
+**Key differences from Qwen3-Omni / MIMO-Audio:**
+
+| | MiniCPM-o | Qwen3-Omni | MIMO-Audio |
+|--|-----------|-----------|-----------|
+| num_vq (RVQ layers) | **1** | 8 | N/A |
+| Hidden state key | `thinker_hidden_states` | `thinker_prefill_embeddings` + `thinker_decode_embeddings` | fused |
+| Stage transfer | SharedMemoryConnector (0→1), direct injection (1→2) | SharedMemoryConnector (all) | SharedMemoryConnector |
+| Codec token dim | 1D flat | 8×N matrix | N/A |
+| TTS boundary detection | `_find_tts_bound()` required | no (full seq) | no |
+| async_chunk support | ✅ implemented | ✅ upstream | N/A |
+
+---
+
+## stage_input_processors/minicpm_o.py — Key Functions
+
+### Sync path
+- `thinker2talker_sync`: accumulates `thinker_hidden_states` into `request_payload`; applies `_find_tts_bound()` to slice TTS segment; returns hidden + token IDs as input to Talker.
+- `talker2code2wav`: reads Talker's `output.token_ids`, filters stop token 6561 by **value** (not `[:-1]`), returns codec frame list to Code2Wav.
+
+### Async_chunk path
+- `thinker2talker_async_chunk`: accumulates per-step hidden states via `torch.cat` into `transfer_manager.request_payload`; sends only when `is_finished=True`.
+- `talker2code2wav_async_chunk`: cursor-based incremental codec reading (`_talker_token_cursor`, `_talker_emitted_len`); emits in `codec_chunk_frames=25` batches; returns finished sentinel `{code_predictor_codes: [], finished: True}` (not None) to trigger `cleanup_sender`.
+
+### Helpers
+- `_ensure_list(x)`: converts `ConstantList` / tensor-like to plain Python list. Based on `qwen3_omni._ensure_list`; differs in always converting to a true list (not returning non-list types as-is).
+- `_find_tts_bound(thinker_token_ids)`: finds `<|tts_bos|>` ... `<|tts_eos|>` boundary within Thinker output tokens to extract the TTS segment.
+
+---
+
+## Benchmark Results (2× RTX 3090, async_chunk)
+
+| Language | STT Accuracy | Latency | Grade |
+|----------|:------------|:--------|:------|
+| English | 92% (word) | 2.3s avg | A |
+| Chinese | 76.1% CER / 95% semantic | 1.5s avg | B+ |
+| Korean | text OK / TTS failed | — | F (TTS) |
+
+**VoiceBench (EN, text-only scoring)**:
+- Knowledge: 100% · Instruction: 95% · Robustness: 100% · Safety: 100%
+- Overall: 98.0% avg, 98.7% pass rate
+
+**Known limitations:**
+- Stop token 6561 rarely generated by Talker → audio fixed at ~20s → tracked as separate issue
+- Korean TTS: CosyVoice2 not trained on Korean → requires fine-tuning
+- streaming TTFP target: < 2s (baseline sync: 6.5s)
+
+---
+
+## Trust State
+
+| Item | Status | Notes |
+|------|:------:|-------|
+| Model code (thinker/talker/code2wav) | ✅ | 2× RTX 3090 E2E validated |
+| minicpmo.yaml | ✅ | Validated + code review 10-pass clean |
+| minicpmo_48gb_2gpu.yaml | ✅ | Same param fixes applied |
+| minicpmo_async_chunk.yaml | ✅ | Same param fixes applied |
+| stage_input_processors/minicpm_o.py | ✅ | 10-pass adversarial review, 2 consecutive clean |
+| registry.py | ✅ | Additive only |
+| Audio input (MiniCPMO processor) | ⚠️ | Unvalidated on 2-GPU text→audio path |
+
+---
+
+## Lessons Learned
+
+1. **Upstream patterns first** — read qwen3_omni.py, qwen2_5_omni.py, mimo_audio.py before writing
+2. **ConstantList wrapping** — `list(request.output_token_ids)` unsafe; use `_ensure_list()`
+3. **Per-step hidden states** — `pooling_output["thinker_hidden_states"]` = current-step slice only; must accumulate across all decode steps
+4. **cleanup_sender contract** — only called when payload is truthy; return finished sentinel dict, not None, to avoid memory leak
+5. **`[:-1]` trim is wrong** — when max_tokens reached without EOS, unconditional trim drops a real frame; filter by value instead
+6. **NCCL_P2P_DISABLE=1** — required for RTX 3090 without NVLink
+7. **Code2Wav GPU memory** — CosyVoice2 flow model ~15 GB; allocate accordingly
+8. **max_inflight: 1** — prevents OOM from concurrent stage memory (vllm-omni#1387)

@@ -64,8 +64,7 @@ stage_args:
       trust_remote_code: true
       engine_output_type: latent
       enable_prefix_caching: false
-      max_num_batched_tokens: 2048
-      max_model_len: 2048
+      max_num_batched_tokens: 4096
       distributed_executor_backend: "mp"
       tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
@@ -74,7 +73,7 @@ stage_args:
     default_sampling_params:
       temperature: 0.9
       top_k: 50
-      max_tokens: 512
+      max_tokens: 4096
       seed: 42
       detokenize: false
       repetition_penalty: 1.05
@@ -99,7 +98,7 @@ stage_args:
       engine_output_type: audio
       gpu_memory_utilization: 0.02
       distributed_executor_backend: "mp"
-      max_num_batched_tokens: 1000
+      max_num_batched_tokens: 4096  # >= max_num_seqs(1) * 800 to avoid precision issues
       tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [1]
