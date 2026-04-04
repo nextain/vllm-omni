@@ -17,9 +17,10 @@
 | VoiceBench Instruction (20) | 95% pass rate | A |
 | VoiceBench Robustness (20) | 100% pass rate | A+ |
 | VoiceBench Safety (15) | 100% pass rate | A+ |
-| English voice conversation (6 scenarios) | 92% STT, 2.3s latency | A |
+| English voice conversation (6 scenarios) | 92% word accuracy, 2.3s latency | A |
 | Chinese voice conversation (2 scenarios) | 76.1% CER / 95% semantic | B+ |
 | Korean voice conversation | TTS complete failure | F (TTS only) |
+| **VoiceBench overall** (text-only) | 98.0% avg score / 98.7% pass rate | A+ |
 
 **Overall:** MiniCPM-o 4.5 is **production-ready for English and Chinese**.  
 Korean TTS is not usable — CosyVoice2 was not trained on Korean.
@@ -60,7 +61,7 @@ Korean TTS is not usable — CosyVoice2 was not trained on Korean.
 
 | Metric | Value | Notes |
 |--------|-------|-------|
-| STT Accuracy (CER) | **92%** | Whisper base, 6-scenario average |
+| STT Accuracy (word accuracy) | **92%** | Whisper base, 6-scenario average |
 | Semantic Similarity | **~90%** | sentence-transformers |
 | Avg Response Time | **2.3s** | Thinker + Talker + Code2Wav total |
 | TTS Quality | Good | CosyVoice2 EN works correctly |

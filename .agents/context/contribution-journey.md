@@ -46,7 +46,7 @@ contribution methodology**.
 
 ### Phase 4: VoiceBench
 - Implemented voicebench_runner.py with rule-based scoring
-- **Result**: 98.0% overall pass rate (Knowledge/Instruction/Robustness/Safety)
+- **Result**: 98.0% avg score, 98.7% pass rate (Knowledge/Instruction/Robustness/Safety)
 
 ### Phase 5: async_chunk streaming implementation
 - **Goal**: TTFP reduction from 6.5s → < 2s
@@ -69,7 +69,7 @@ contribution methodology**.
 - **Root cause analysis**: Model conditioning issue, not a code bug
   - Talker does not reliably learn to generate EOS under current training distribution
 - **Decision**: Separate issue, not blocking upstream PR; document as known limitation
-- **Next**: upstream collaboration on issue #207
+- **Next**: tracked internally as nextain/naia-os#207; upstream collaboration pending
 
 ---
 
@@ -104,7 +104,7 @@ contribution methodology**.
 | E2E validated hardware | 2× RTX 3090 |
 | async_chunk streaming | implemented, E2E pending |
 | Korean TTS | ⚠️ known failure, documented |
-| Stop token 6561 | ⚠️ known issue → separate issue #207 |
+| Stop token 6561 | ⚠️ known issue → tracked separately, upstream collaboration pending |
 
 **Upstream issue reference**: vllm-omni#1182 (Allyyi's parallel work, same model)
 

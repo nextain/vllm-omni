@@ -15,7 +15,7 @@ MiniCPM-o 4.5는 3단계 omni 모델입니다:
 ```bash
 # 1. 서버 시작 (2× RTX 3090)
 NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
-  --stage-configs-path ../../vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
+  --stage-configs-path ../../../vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
   --trust-remote-code --host 0.0.0.0 --port 8000
 
 # 2. 대화 벤치마크 실행
@@ -57,7 +57,7 @@ python voicebench_runner.py
 | 중국어 | CER 76.1% / 의미 95% | 평균 1.5s | ✅ 정상 작동 |
 | 한국어 | 텍스트 OK / TTS 실패 | — | ⚠️ TTS 미지원 |
 
-**VoiceBench (영어, 텍스트 전용):** 전체 98.0% · pass rate 98.7%
+**VoiceBench (영어, 텍스트 전용):** 평균 점수 98.0% · pass rate 98.7%
 
 ### 알려진 한계
 

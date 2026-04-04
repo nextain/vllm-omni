@@ -51,6 +51,8 @@ Human-readable Korean mirrors are in `.users/context/`.
 
 ### 3. Development process
 - Issue-driven development: Understand → Plan → Build → Review → E2E → Post-test Review
+  (`.agents/context/contribution-journey.md` tracks the actual implementation phases as "Phase 1–6" —
+  these are project history phases, not the same as the development process steps above)
 - Code review uses headless adversarial subagents (adversarial frame, per-pass lenses)
 - Session handoff via `.agents/context/` files — no conversation memory assumed
 

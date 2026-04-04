@@ -10,8 +10,8 @@
 Naia 하드웨어 티어(2× RTX 3090 48GB, 32GB 단일 GPU)의 주요 타깃입니다. upstream 기여를 통해
 Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈소스 커뮤니티 전체에도 MiniCPM-o 지원을 제공합니다.
 
-**AI-native 오픈소스 실험**: 이 기여의 전 과정 — upstream 패턴 분석, 구현, 헤드리스 서브에이전트를
-이용한 적대적 코드 리뷰 — 이 모두 AI 에이전트(Claude)의 이슈 주도 개발 워크플로우로 수행되었습니다.
+**AI-native 오픈소스 실험**: 이 기여의 전 과정(upstream 패턴 분석, 구현, 헤드리스 서브에이전트를
+이용한 적대적 코드 리뷰)이 모두 AI 에이전트(Claude)의 이슈 주도 개발 워크플로우로 수행되었습니다.
 코드 결과물뿐 아니라 **AI-native 오픈소스 기여 방법론 자체를 검증**하는 실험입니다.
 
 ---
@@ -93,9 +93,9 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 - 종합: 98.0% 평균, 98.7% pass rate
 
 **알려진 한계:**
-- Stop token 6561 미생성 → 오디오 ~20s 고정 → 별도 이슈 #207로 추적
+- Stop token 6561 미생성 → 오디오 ~20s 고정 → 별도 이슈로 추적, upstream 협력 예정
 - 한국어 TTS: CosyVoice2가 한국어 미지원 → 파인튜닝 필요
-- 스트리밍 TTFP 목표: < 2s (baseline sync: 6.5s)
+- 스트리밍 TTFP 실측: ~0.07s (Thinker 완료 후 첫 오디오 패킷; baseline sync: 6.5s)
 
 ---
 
@@ -104,9 +104,9 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | 항목 | 상태 | 비고 |
 |------|:----:|------|
 | 모델 코드 (thinker/talker/code2wav) | ✅ | 2× RTX 3090 E2E 검증 |
-| minicpmo.yaml | ✅ | 10패스 코드 리뷰 클린 |
-| minicpmo_48gb_2gpu.yaml | ✅ | 동일 파라미터 수정 적용 |
-| minicpmo_async_chunk.yaml | ✅ | 동일 파라미터 수정 적용 |
+| minicpmo.yaml | ✅ | 10패스 적대적 리뷰, 2연속 클린 |
+| minicpmo_48gb_2gpu.yaml | ✅ | 동일 파라미터 수정 적용, 10패스 리뷰 |
+| minicpmo_async_chunk.yaml | ✅ | 동일 파라미터 수정 적용, 10패스 리뷰 |
 | stage_input_processors/minicpm_o.py | ✅ | 10패스 적대적 리뷰, 2연속 클린 |
 | registry.py | ✅ | 추가만 |
 | 오디오 입력 (MiniCPMO processor) | ⚠️ | 2-GPU 텍스트→오디오 경로 미검증 |

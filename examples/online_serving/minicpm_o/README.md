@@ -15,7 +15,7 @@ OpenAI-compatible API. MiniCPM-o 4.5 is a 3-stage omni model:
 ```bash
 # 1. Start the server (2× RTX 3090)
 NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
-  --stage-configs-path ../../vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
+  --stage-configs-path ../../../vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
   --trust-remote-code --host 0.0.0.0 --port 8000
 
 # 2. Run the conversation benchmark
@@ -57,7 +57,7 @@ See [BENCHMARK.md](BENCHMARK.md) for full results.
 | Chinese | 76.1% CER / 95% semantic | 1.5s avg | ✅ Working |
 | Korean | Text OK / TTS failed | — | ⚠️ TTS not supported |
 
-**VoiceBench (EN, text-only):** 98.0% overall · 98.7% pass rate
+**VoiceBench (EN, text-only):** 98.0% avg score · 98.7% pass rate
 
 ### Known Limitations
 
