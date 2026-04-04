@@ -232,6 +232,14 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 chat_template_kwargs = request.chat_template_kwargs or {}
                 chat_template_kwargs.update(reasoning_effort=request.reasoning_effort)
 
+                # MiniCPM-o models need use_tts_template=True for audio generation.
+                # This adds <|tts_bos|> and <|tts_eos|> markers to the chat template,
+                # which are required for proper TTS conditioning in the talker stage.
+                if "use_tts_template" not in chat_template_kwargs:
+                    model_name = getattr(request, "model", "") or ""
+                    if "minicpm" in model_name.lower() or "MiniCPM-o" in model_name:
+                        chat_template_kwargs["use_tts_template"] = True
+
                 # Merge chat_template_kwargs with defaults
                 merged_template_kwargs = self._prepare_extra_chat_template_kwargs(
                     chat_template_kwargs,

@@ -98,9 +98,10 @@ class Qwen3TTSTokenizer:
         inst.device = getattr(inst.model, "device", None)
         if inst.device is None:
             # fallback: infer from first parameter device
-            try:
-                inst.device = next(inst.model.parameters()).device
-            except StopIteration:
+            p = next(inst.model.parameters(), None)
+            if p is not None:
+                inst.device = p.device
+            else:
                 inst.device = torch.device("cpu")
 
         return inst
