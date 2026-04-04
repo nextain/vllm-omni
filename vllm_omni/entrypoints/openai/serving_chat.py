@@ -239,13 +239,8 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 # which are required for proper TTS conditioning in the talker stage.
                 if "use_tts_template" not in chat_template_kwargs:
                     model_name = getattr(request, "model", "") or ""
-                    logger.info(
-                        "[TTS-DEBUG] model=%r, chat_template_kwargs=%s",
-                        model_name, chat_template_kwargs,
-                    )
                     if "minicpm" in model_name.lower() or "MiniCPM-o" in model_name:
                         chat_template_kwargs["use_tts_template"] = True
-                        logger.info("[TTS-DEBUG] Set use_tts_template=True")
 
                 # Merge chat_template_kwargs with defaults
                 merged_template_kwargs = self._prepare_extra_chat_template_kwargs(
