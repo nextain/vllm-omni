@@ -110,6 +110,25 @@ contribution methodology**.
 
 ---
 
+## Documentation Structure
+
+The `examples/online_serving/minicpm_o/` directory uses a dual-language structure:
+
+| File | Language | Purpose |
+|------|----------|---------|
+| `README.md` | **English (primary)** | Quick start, scripts, stage configs — link to KO |
+| `README.ko.md` | Korean | Same content in Korean — link to EN |
+| `BENCHMARK.md` | **English** | Full benchmark results — link to KO |
+| `BENCHMARK.ko.md` | Korean | Same benchmark in Korean — link to EN |
+
+Header convention: `**Language / 언어**: [English](README.md) | [한국어](README.ko.md)`
+
+Old benchmark files (`final_benchmark_report.md`, `benchmark_summary.md`, `benchmark_analysis.md`,
+`COMPREHENSIVE_BENCHMARK_ANALYSIS.md`, `FINAL_REPORT.md`, `SESSION_HANDOFF.md`) are kept for
+internal history but are superseded by `BENCHMARK.md` / `BENCHMARK.ko.md`.
+
+---
+
 ## Files to Review When Resuming
 
 ```

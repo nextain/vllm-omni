@@ -113,6 +113,24 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 
 ---
 
+## 문서 구조
+
+`examples/online_serving/minicpm_o/` 디렉토리는 영/한 듀얼 언어 구조를 사용합니다:
+
+| 파일 | 언어 | 목적 |
+|------|------|------|
+| `README.md` | **영어 (주 언어)** | 빠른 시작, 스크립트, stage config — KO 링크 포함 |
+| `README.ko.md` | 한국어 | 동일 내용 한국어 — EN 링크 포함 |
+| `BENCHMARK.md` | **영어** | 전체 벤치마크 결과 — KO 링크 포함 |
+| `BENCHMARK.ko.md` | 한국어 | 동일 벤치마크 한국어 — EN 링크 포함 |
+
+헤더 규칙: `**Language / 언어**: [English](README.md) | [한국어](README.ko.md)`
+
+기존 파일들(`final_benchmark_report.md`, `benchmark_summary.md` 등)은 내부 히스토리로 보존되나
+`BENCHMARK.md` / `BENCHMARK.ko.md`로 대체됨.
+
+---
+
 ## 이어서 작업할 때 읽어야 할 파일
 
 ```
