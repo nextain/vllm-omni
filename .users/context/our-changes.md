@@ -1,6 +1,9 @@
 # 우리가 수정한 것 — 현재 상태
 
-## 브랜치: feat/minicpm-o (upstream/main 기반)
+## 브랜치: main (vllm-project/vllm-omni fork)
+
+**레포 구조**: 모든 작업은 `nextain/vllm-omni` main에 있습니다.
+upstream PR 제출 시에는 main에서 별도 브랜치를 만들어 `vllm-project/vllm-omni` main으로 PR을 올립니다.
 
 ## 목적
 
@@ -106,6 +109,11 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 - Stop token 6561 미생성 → 오디오 ~20s 고정 → 별도 이슈로 추적, upstream 협력 예정
 - 한국어 TTS: CosyVoice2가 한국어 미지원 → 파인튜닝 필요
 - 스트리밍 TTFP 실측: ~0.07s (Thinker 완료 후 첫 오디오 패킷; baseline sync: 6.5s)
+
+**OmniSpeaker 클라이언트 버그 (수정 완료):**
+- `getattr(chunk, "modality", "text")` 기본값으로 오디오 청크가 항상 텍스트 경로로 처리됨
+- 수정: 기본값을 `None`으로 변경, `elif modality == "text"` 패턴 (upstream gradio_demo.py 정렬)
+- 커밋: `40576264`
 
 ---
 

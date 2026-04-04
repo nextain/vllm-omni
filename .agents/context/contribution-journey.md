@@ -71,6 +71,20 @@ contribution methodology**.
 - **Decision**: Separate issue, not blocking upstream PR; document as known limitation
 - **Next**: tracked internally as nextain/naia-os#207; upstream collaboration pending
 
+### Phase 7: Benchmark script multi-pass review
+- 11-pass adversarial headless review on all benchmark scripts
+- **Key fixes**: CER formula, Counter multiset for character overlap, SentenceTransformer cache,
+  knowledge_retention loop, tts_speech_ratio removed from weights, SampleResult field names,
+  CATEGORIES deepcopy, OmniSpeaker audio chunk detection (`modality` default `None` not `"text"`)
+- 2 consecutive clean passes achieved
+
+### Phase 8: Repo structure cleanup
+- **Problem**: Work split between `main` (54 commits, early code) and `feat/minicpm-o`
+  (252 commits, complete). Fork main was upstream-identical — nothing visible at
+  `github.com/nextain/vllm-omni`.
+- **Fix**: Force pushed `feat/minicpm-o` → fork `main`; deleted `feat/minicpm-o` branch
+- **Result**: All work on `nextain/vllm-omni` main. No more branches for normal work.
+
 ---
 
 ## Key Upstream Findings

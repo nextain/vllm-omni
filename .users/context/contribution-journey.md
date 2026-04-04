@@ -75,6 +75,19 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 - **결정**: 별도 이슈로 분리, upstream PR 차단 안 함; 알려진 한계로 문서화
 - **다음**: 내부 이슈로 별도 추적 중; upstream 협력 예정
 
+### Phase 7: 벤치마크 스크립트 멀티패스 리뷰
+- 벤치마크 스크립트 전체 11패스 적대적 헤드리스 리뷰
+- **주요 수정**: CER 공식, Counter multiset, SentenceTransformer 캐시,
+  knowledge_retention 루프, tts_speech_ratio 가중치 제거, SampleResult 필드명,
+  CATEGORIES deepcopy, OmniSpeaker 오디오 청크 감지 버그 (`modality` 기본값 `None`)
+- 2연속 클린 패스 달성
+
+### Phase 8: 레포 구조 정리
+- **문제**: 작업이 `main` (54커밋, 초기 코드)과 `feat/minicpm-o` (252커밋, 완성본)로 분리됨.
+  fork main이 upstream과 동일 → `github.com/nextain/vllm-omni`에서 아무것도 안 보임
+- **수정**: `feat/minicpm-o` → fork `main` force push; `feat/minicpm-o` 브랜치 삭제
+- **결과**: 모든 작업이 `nextain/vllm-omni` main에 있음. 브랜치 없이 main에서 작업.
+
 ---
 
 ## 핵심 upstream 발견사항
