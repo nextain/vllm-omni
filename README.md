@@ -1,97 +1,141 @@
-<p align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/vllm-project/vllm-omni/refs/heads/main/docs/source/logos/vllm-omni-logo.png">
-    <img alt="vllm-omni" src="https://raw.githubusercontent.com/vllm-project/vllm-omni/refs/heads/main/docs/source/logos/vllm-omni-logo.png" width=55%>
-  </picture>
-</p>
-<h3 align="center">
-Easy, fast, and cheap omni-modality model serving for everyone
-</h3>
+# nextain/vllm-omni — MiniCPM-o 4.5 Contribution Fork
 
-<p align="center">
-| <a href="https://vllm-omni.readthedocs.io/en/latest/"><b>Documentation</b></a> | <a href="https://discuss.vllm.ai"><b>User Forum</b></a> | <a href="https://slack.vllm.ai"><b>Developer Slack</b></a> | <a href="docs/assets/WeChat.jpg"><b>WeChat</b></a> | <a href="https://arxiv.org/abs/2602.02204"><b>Paper</b></a> | <a href="https://docs.google.com/presentation/d/1XJWgv79lORl8rbaVvp2d5Sqs6ZEBgAgj/edit?slide=id.p1#slide=id.p1"><b>Slides</b></a> |
-</p>
-
+> **Fork of [vllm-project/vllm-omni](https://github.com/vllm-project/vllm-omni)**  
+> Upstream README: [README.upstream.md](README.upstream.md)
 
 ---
 
-*Latest News* 🔥
+## What This Fork Is
 
-- [2026/03] Check out our first public [project deepdive](https://youtu.be/sgwNfsNnR9I) at the vLLM Hong Kong Meetup!
-- [2026/03] **[vllm-omni-skills](https://github.com/hsliuustc0106/vllm-omni-skills)** is a community-driven collection of AI assistant skills that help developers work with vLLM-Omni more effectively. These skills can be used with popular agentic AI coding assistants like **Cursor IDE**, **Claude**, **Codex**, and more.
-- [2026/02] We released [0.16.0](https://github.com/vllm-project/vllm-omni/releases/tag/v0.16.0) - A major alignment + capability release that rebases onto **upstream vLLM v0.16.0** and significantly expands performance, distributed execution, and production readiness across **Qwen3-Omni / Qwen3-TTS**, **Bagel**, **MiMo-Audio**, **GLM-Image** and the **Diffusion (DiT) image/video stack**—while also improving platform coverage (CUDA / ROCm / NPU / XPU), CI quality, and documentation.
-- [2026/02] We released [0.14.0](https://github.com/vllm-project/vllm-omni/releases/tag/v0.14.0) - This is the first **stable release** of vLLM-Omni that expands Omni’s diffusion / image-video generation and audio / TTS stack, improves distributed execution and memory efficiency, and broadens platform/backend coverage (GPU/ROCm/NPU/XPU). It also brings meaningful upgrades to serving APIs, profiling & benchmarking, and overall stability. Please check our latest [paper](https://arxiv.org/abs/2602.02204) for architecture design and performance results.
-- [2026/01] We released [0.12.0rc1](https://github.com/vllm-project/vllm-omni/releases/tag/v0.12.0rc1) - a major RC milestone focused on maturing the diffusion stack, strengthening OpenAI-compatible serving, expanding omni-model coverage, and improving stability across platforms (GPU/NPU/ROCm).
-- [2025/11] vLLM community officially released [vllm-project/vllm-omni](https://github.com/vllm-project/vllm-omni) in order to support omni-modality models serving.
+This repository adds **MiniCPM-o 4.5** omni model support to vllm-omni, developed as an upstream contribution.
+
+**Practical goal**: Enable real-time voice conversation on consumer hardware (2× RTX 3090, no NVLink) — the hardware tier powering [Naia OS](https://github.com/nextain/naia-os), an AI-native desktop OS.
+
+**Open-source goal**: Contribute MiniCPM-o 4.5 support to upstream vllm-omni so the broader community can serve this model efficiently on multi-GPU setups.
+
+**Methodology experiment**: The entire workflow — upstream pattern analysis, implementation, and adversarial code review using headless subagents — was driven by an AI coding agent following an issue-driven development process. This is a proof of concept for **AI-native open-source contribution**: an AI agent that understands a complex framework, writes upstream-quality code, and self-reviews it to a production standard.
+
+Upstream PR target: [vllm-project/vllm-omni](https://github.com/vllm-project/vllm-omni) · Related upstream issue: [#1182](https://github.com/vllm-project/vllm-omni/issues/1182)
 
 ---
 
-## About
+## What We Added
 
-[vLLM](https://github.com/vllm-project/vllm) was originally designed to support large language models for text-based autoregressive generation tasks. vLLM-Omni is a framework that extends its support for omni-modality model inference and serving:
+### Model: 3-Stage Omni Pipeline
 
-- **Omni-modality**: Text, image, video, and audio data processing
-- **Non-autoregressive Architectures**: extend the AR support of vLLM to Diffusion Transformers (DiT) and other parallel generation models
-- **Heterogeneous outputs**: from traditional text generation to multimodal outputs
+MiniCPM-o 4.5 uses a three-stage pipeline, each running on a dedicated GPU:
 
-<p align="center">
-  <picture>
-    <img alt="vllm-omni" src="https://raw.githubusercontent.com/vllm-project/vllm-omni/refs/heads/main/docs/source/architecture/omni-modality-model-architecture.png" width=55%>
-  </picture>
-</p>
-
-vLLM-Omni is fast with:
-
-- State-of-the-art AR support by leveraging efficient KV cache management from vLLM
-- Pipelined stage execution overlapping for high throughput performance
-- Fully disaggregation based on OmniConnector and dynamic resource allocation across stages
-
-vLLM-Omni is flexible and easy to use with:
-
-- Heterogeneous pipeline abstraction to manage complex model workflows
-- Seamless integration with popular Hugging Face models
-- Tensor, pipeline, data and expert parallelism support for distributed inference
-- Streaming outputs
-- OpenAI-compatible API server
-
-vLLM-Omni seamlessly supports most popular open-source models on HuggingFace, including:
-
-- Omni-modality models (e.g. Qwen-Omni)
-- Multi-modality generation models (e.g. Qwen-Image)
-
-## Getting Started
-
-Visit our [documentation](https://vllm-omni.readthedocs.io/en/latest/) to learn more.
-
-- [Installation](https://vllm-omni.readthedocs.io/en/latest/getting_started/installation/)
-- [Quickstart](https://vllm-omni.readthedocs.io/en/latest/getting_started/quickstart/)
-- [List of Supported Models](https://vllm-omni.readthedocs.io/en/latest/models/supported_models/)
-
-## Contributing
-
-We welcome and value any contributions and collaborations.
-Please check out [Contributing to vLLM-Omni](https://vllm-omni.readthedocs.io/en/latest/contributing/) for how to get involved.
-
-## Citation
-
-If you use vLLM-Omni for your research, please cite our [paper](https://arxiv.org/abs/2602.02204):
-
-```bibtex
-@article{yin2026vllmomni,
-  title={vLLM-Omni: Fully Disaggregated Serving for Any-to-Any Multimodal Models},
-  author={Peiqi Yin, Jiangyun Zhu, Han Gao, Chenguang Zheng, Yongxiang Huang, Taichang Zhou, Ruirui Yang, Weizhi Liu, Weiqing Chen, Canlin Guo, Didan Deng, Zifeng Mo, Cong Wang, James Cheng, Roger Wang, Hongsheng Liu},
-  journal={arXiv preprint arXiv:2602.02204},
-  year={2026}
-}
+```
+Input (text + image / audio)
+  → Stage 0: Thinker  (GPU 0) — Multimodal LLM (Idefics2 vision + Whisper audio + Qwen3 backbone)
+  → Stage 1: Talker   (GPU 1) — TTS AR codec generator (MiniCPMTTS Llama)
+  → Stage 2: Code2Wav (GPU 1) — Audio synthesis (CosyVoice2 flow + HiFi-GAN vocoder)
+Output: PCM audio stream
 ```
 
-## Join the Community
-Feel free to ask questions, provide feedbacks and discuss with fellow users of vLLM-Omni in `#sig-omni` slack channel at [slack.vllm.ai](https://slack.vllm.ai) or vLLM user forum at [discuss.vllm.ai](https://discuss.vllm.ai).
+### Files Added
 
-## Star History
+| File | Purpose |
+|------|---------|
+| `vllm_omni/model_executor/models/minicpm_o/configuration_minicpmo.py` | Model config class |
+| `vllm_omni/model_executor/models/minicpm_o/minicpm_o.py` | Unified entry + talker preprocess |
+| `vllm_omni/model_executor/models/minicpm_o/minicpm_o_thinker.py` | Thinker stage model |
+| `vllm_omni/model_executor/models/minicpm_o/minicpm_o_talker.py` | Talker stage model |
+| `vllm_omni/model_executor/models/minicpm_o/minicpm_o_code2wav.py` | Code2Wav stage model |
+| `vllm_omni/model_executor/stage_input_processors/minicpm_o.py` | Stage-to-stage data transfer (sync + async_chunk) |
+| `vllm_omni/model_executor/stage_configs/minicpmo.yaml` | Single 24 GB GPU config |
+| `vllm_omni/model_executor/stage_configs/minicpmo_48gb_2gpu.yaml` | 2× RTX 3090 sync config |
+| `vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml` | 2× RTX 3090 streaming config (TTFP ~0.07s) |
 
-[![Star History Chart](https://api.star-history.com/svg?repos=vllm-project/vllm-omni&type=date&legend=top-left)](https://www.star-history.com/#vllm-project/vllm-omni&type=date&legend=top-left)
+### Files Modified
+
+| File | Change |
+|------|--------|
+| `vllm_omni/model_executor/models/registry.py` | 6 MiniCPM-o model entries added |
+| `pyproject.toml` | `sentence-transformers`, `scikit-learn` optional deps added |
+
+---
+
+## Benchmark Results
+
+Tested on **2× RTX 3090** (48 GB total, no NVLink), `minicpmo_async_chunk.yaml`.
+
+### VoiceBench (EN, text-only scoring)
+
+| Category | Avg Score | Pass Rate |
+|----------|----------:|----------:|
+| Knowledge (20 MCQ) | 100.0% | 100.0% |
+| Instruction (20) | 92.5% | 95.0% |
+| Robustness (20) | 100.0% | 100.0% |
+| Safety (15) | 100.0% | 100.0% |
+| **Overall (75)** | **98.0%** | **98.7%** |
+
+### Voice Conversation Quality
+
+| Language | STT Accuracy | Latency | Status |
+|----------|:------------|:--------|:------:|
+| English | 92% word accuracy | 2.3s avg | ✅ Production ready |
+| Chinese | 76.1% CER / 95% semantic | 1.5s avg | ✅ Working |
+| Korean | Text OK / TTS garbled | — | ⚠️ CosyVoice2 not trained on KO |
+
+### Latency (async_chunk mode)
+
+| Stage | Time |
+|-------|------|
+| Thinker (text generation) | 1.5–2.5s |
+| TTFP (time to first audio packet) | **~0.07s** |
+| Total end-to-end | 2.0–4.0s |
+
+Full results: [`examples/online_serving/minicpm_o/BENCHMARK.md`](examples/online_serving/minicpm_o/BENCHMARK.md)
+
+---
+
+## Quick Start
+
+```bash
+# Single 24 GB GPU
+vllm serve openbmb/MiniCPM-o-4_5 --omni \
+  --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo.yaml \
+  --trust-remote-code --port 8000
+
+# 2× RTX 3090 — sync mode
+NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
+  --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo_48gb_2gpu.yaml \
+  --trust-remote-code --port 8000
+
+# 2× RTX 3090 — streaming (recommended, TTFP ~0.07s)
+NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
+  --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
+  --trust-remote-code --port 8000
+```
+
+> `NCCL_P2P_DISABLE=1` is required for RTX 3090 without NVLink.
+
+Evaluation scripts and benchmark details: [`examples/online_serving/minicpm_o/`](examples/online_serving/minicpm_o/)
+
+---
+
+## Known Limitations
+
+| Issue | Impact | Notes |
+|-------|--------|-------|
+| Stop token 6561 rarely generated | Audio fixed at ~20s | Talker training issue; `_trim_silence()` as workaround |
+| Korean TTS | Garbled audio | CosyVoice2 not trained on Korean |
+
+---
+
+## Key Implementation Notes
+
+- **`NCCL_P2P_DISABLE=1`** — required for RTX 3090 (no NVLink between GPUs)
+- **`max_inflight: 1`** — prevents OOM from concurrent stage memory (upstream [#1387](https://github.com/vllm-project/vllm-omni/issues/1387))
+- **`_find_tts_bound()`** — MiniCPM-o embeds TTS tokens inline in Thinker output; boundary detection required (unlike Qwen3-Omni)
+- **`_ensure_list()`** — `ConstantList` vLLM internal type does not iterate correctly via `list()`; always convert explicitly
+- **async_chunk hidden state accumulation** — `pooling_output["thinker_hidden_states"]` returns only the current decode step; must accumulate via `torch.cat` across all steps
+
+See full implementation history and lessons learned: [`.agents/context/contribution-journey.md`](.agents/context/contribution-journey.md)
+
+---
 
 ## License
 
-Apache License 2.0, as found in the [LICENSE](./LICENSE) file.
+Apache License 2.0 — same as upstream vllm-omni. See [LICENSE](./LICENSE).
