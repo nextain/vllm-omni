@@ -1,0 +1,10 @@
+What is artificial intelligence? Answer in one sentence.
+Explain the difference between machine learning and deep learning briefly.
+What are the main use cases of large language models?
+Describe how a transformer architecture works in simple terms.
+What is multimodal AI and why is it useful?
+How does text-to-speech synthesis work at a high level?
+What is the role of attention mechanism in neural networks?
+Explain the concept of transfer learning in 15 words.
+What makes omni models different from single-modality models?
+Describe a real-world application of voice AI assistants.
