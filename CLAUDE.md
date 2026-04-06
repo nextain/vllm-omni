@@ -73,22 +73,44 @@ Human-readable Korean mirrors are in `.users/context/`.
 
 ## Quick Start
 
+> **Environment**: Run inside `distrobox vllm-dev`. Venv: `/home/luke/.venvs/vllm-omni`.
+> **Critical**: `--omni` flag is required. Without it, CLI falls back to standard vllm
+> which does not recognize `--stage-configs-path`.
+
+### Scripts (recommended)
+
 ```bash
+# 2× RTX 3090 + async_chunk streaming
+distrobox enter vllm-dev -- bash scripts/serve_async_chunk.sh
+
+# E2E test (offline inference, no server needed)
+distrobox enter vllm-dev -- bash scripts/local_e2e_test.sh
+```
+
+### Manual
+
+```bash
+distrobox enter vllm-dev
+source /home/luke/.venvs/vllm-omni/bin/activate
+cd /var/home/luke/dev/vllm-omni
+
 # Basic (stage_configs auto-loaded)
 vllm serve openbmb/MiniCPM-o-4_5 --omni --trust-remote-code --port 8000
 
-# Custom stage_configs
+# Single GPU 24 GB
 vllm serve openbmb/MiniCPM-o-4_5 --omni \
   --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo.yaml \
   --trust-remote-code --port 8000
 
 # 2× RTX 3090 (NCCL P2P disable required — no NVLink)
-NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
+export NCCL_P2P_DISABLE=1
+vllm serve openbmb/MiniCPM-o-4_5 --omni \
   --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo_48gb_2gpu.yaml \
   --trust-remote-code --port 8000
 
-# async_chunk streaming (TTFP optimization)
-NCCL_P2P_DISABLE=1 vllm serve openbmb/MiniCPM-o-4_5 --omni \
+# 2× RTX 3090 + async_chunk streaming (TTFP optimization)
+export NCCL_P2P_DISABLE=1
+vllm serve openbmb/MiniCPM-o-4_5 --omni \
   --stage-configs-path vllm_omni/model_executor/stage_configs/minicpmo_async_chunk.yaml \
   --trust-remote-code --port 8000
 ```

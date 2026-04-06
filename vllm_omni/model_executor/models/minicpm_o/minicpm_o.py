@@ -17,22 +17,28 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+import asyncio
+from collections.abc import AsyncGenerator, Iterable
 from functools import cached_property
 
+import numpy as np
 import torch
 import torch.nn as nn
-from vllm.config import VllmConfig
+from vllm.config import ModelConfig, VllmConfig
+from vllm.inputs import PromptType, TokensPrompt
 from vllm.logger import init_logger
-from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP
+from vllm.model_executor.models.interfaces import SupportsMultiModal, SupportsPP, SupportsRealtime
 from vllm.model_executor.models.minicpmo import (
     MiniCPMODummyInputsBuilder,
     MiniCPMOMultiModalProcessor,
     MiniCPMOProcessingInfo,
 )
+from vllm.model_executor.models.qwen3_asr_realtime import Qwen3ASRRealtimeBuffer
 from vllm.model_executor.models.utils import init_vllm_registered_model, maybe_prefix
 from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import IntermediateTensors
+from vllm.tokenizers import cached_tokenizer_from_config
+from vllm.transformers_utils.processor import cached_processor_from_config
 from vllm.v1.sample.sampler import Sampler
 
 from vllm_omni.model_executor.custom_process_mixin import CustomProcessMixin
@@ -54,6 +60,7 @@ class MiniCPMOForConditionalGeneration(
     nn.Module,
     SupportsMultiModal,
     SupportsPP,
+    SupportsRealtime,
     CustomProcessMixin,
 ):
     """Unified MiniCPM-o 4.5 model: Thinker → Talker → Code2Wav.
@@ -87,6 +94,12 @@ class MiniCPMOForConditionalGeneration(
         "qkv_proj": ["q_proj", "k_proj", "v_proj"],
         "gate_up_proj": ["gate_proj", "up_proj"],
     }
+
+    # SupportsRealtime — enable /v1/realtime WebSocket endpoint
+    supports_realtime = True
+    # MiniCPM-o Thinker generates text tokens; 1 token per audio segment
+    # (same as Qwen3-Omni: transcription, not generation)
+    realtime_max_tokens: int = 1
 
     def __init__(self, *, vllm_config: VllmConfig, prefix: str = "") -> None:
         super().__init__()
@@ -204,6 +217,56 @@ class MiniCPMOForConditionalGeneration(
         if modality.startswith("audio"):
             return "(<audio>./</audio>)"
         return None
+
+    # ==================== Realtime (SupportsRealtime) ====================
+
+    @classmethod
+    async def buffer_realtime_audio(
+        cls,
+        audio_stream: AsyncGenerator[np.ndarray, None],
+        input_stream: asyncio.Queue[list[int]],
+        model_config: ModelConfig,
+    ) -> AsyncGenerator[PromptType, None]:
+        """Buffer streaming audio and yield TokensPrompts for /v1/realtime.
+
+        Follows the Qwen3-Omni pattern exactly
+        (vllm_omni/model_executor/models/qwen3_omni/qwen3_omni.py).
+        Uses Qwen3ASRRealtimeBuffer for segment management.
+        """
+        processor = cached_processor_from_config(model_config)
+        feature_extractor = processor.feature_extractor
+        sampling_rate = feature_extractor.sampling_rate
+        tokenizer = cached_tokenizer_from_config(model_config)
+
+        # 5-second segments for low-latency streaming (same as Qwen3-Omni)
+        segment_duration_s = 5.0
+        buffer = Qwen3ASRRealtimeBuffer(
+            sampling_rate=sampling_rate,
+            segment_duration_s=segment_duration_s,
+        )
+
+        audio_placeholder = cls.get_placeholder_str("audio", 0)
+        prompt_template = (
+            f"<|im_start|>user\n{audio_placeholder}<|im_end|>\n"
+            "<|im_start|>assistant\n"
+        )
+        prompt_token_ids = tokenizer.encode(prompt_template)
+
+        async for audio_chunk in audio_stream:
+            buffer.write_audio(audio_chunk)
+
+            while (segment := buffer.read_audio()) is not None:
+                yield TokensPrompt(
+                    prompt_token_ids=prompt_token_ids,
+                    multi_modal_data={"audio": segment},
+                )
+
+        remaining = buffer.flush()
+        if remaining is not None and len(remaining) > 0:
+            yield TokensPrompt(
+                prompt_token_ids=prompt_token_ids,
+                multi_modal_data={"audio": remaining},
+            )
 
     def embed_input_ids(
         self,
