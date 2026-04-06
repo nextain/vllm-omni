@@ -141,6 +141,32 @@ Input (text + image/audio)
 
 ---
 
+## WebSocket Endpoint Status (as of 2026-04-06)
+
+| Endpoint | Status | Notes |
+|----------|:------:|-------|
+| POST /v1/chat/completions (non-stream) | ✅ E2E working | text + audio returned together, ~28s |
+| POST /v1/chat/completions (stream=True SSE) | ✅ confirmed | audio chunks as base64 WAV, 0.9s TTFP |
+| GET /v1/realtime (WebSocket) | ⚠️ ASR only | transcription.delta/done only, no audio output |
+| GET /v1/omni (WebSocket) | ✅ **implemented** (c3ad9985) | full-duplex: PCM16 in → WAV chunks out |
+
+## /v1/omni Protocol
+
+See `vllm_omni/entrypoints/openai/serving_omni_duplex.py` for full docs.
+
+Client sends: session.config (text) -> binary PCM16 frames -> input.done (text)  
+Server sends: turn.start -> transcript.delta -> audio.start -> binary WAV chunks -> audio.done -> turn.done
+
+**Key design decisions:**
+- Reuses `OmniOpenAIServingChat.create_chat_completion(raw_request=None)` - no new inference path
+- `format: "wav_chunk"` - each binary frame is a self-contained WAV
+- `abort_id = f"chatcmpl-{pre_uuid}"` pre-computed for safe early-disconnect abort
+- Does NOT use `_add_streaming_input_request` (PR #2208) - MiniCPM-o needs full Thinker output; no TTFP benefit
+
+**Known v1 limitations:** Unbounded conversation history; assistant audio not in history; E2E test pending.
+
+---
+
 ## Trust State
 
 | Item | Status | Notes |
@@ -160,6 +186,8 @@ Input (text + image/audio)
 | offline_inference/minicpm_o/end2end.py | ✅ | 8-pass adversarial review; SamplingParams aligned |
 | offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8-pass review; init_timeout, use_image_audio added |
 | offline_inference/minicpm_o/run_*.sh | ✅ | File existence checks, PROMPTS_FILE variable reuse |
+| serving_omni_duplex.py | ✅ | 3-pass adversarial review (3 CRITICALs fixed); /v1/omni full-duplex |
+| api_server.py (/v1/omni route) | ✅ | Additive only; null guard for chat service |
 
 ---
 
