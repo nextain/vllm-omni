@@ -300,7 +300,7 @@ class OmniGPUModelRunner(GPUModelRunner):
         for req_id in unscheduled_req_ids:
             self.input_batch.remove_request(req_id)
 
-        if self.use_async_spec_decode:
+        if getattr(self, 'use_async_spec_decode', False):
             self.prev_num_draft_tokens.np.fill(0)
 
         reqs_to_add: list[CachedRequestState] = []
