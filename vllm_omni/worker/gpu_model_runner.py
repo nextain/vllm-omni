@@ -798,7 +798,7 @@ class OmniGPUModelRunner(GPUModelRunner):
             elif self.uses_xdrope_dim > 0:
                 positions = self.xdrope_positions.gpu[:, :num_tokens_padded]
             else:
-                positions = self.positions[:num_tokens_padded]
+                positions = self.positions.gpu[:num_tokens_padded]
 
             if get_pp_group().is_first_rank:
                 intermediate_tensors = None
@@ -1077,7 +1077,7 @@ class OmniGPUModelRunner(GPUModelRunner):
                     dtype=self.dtype, device=self.device, non_blocking=True
                 )
                 start_offset = int(self.query_start_loc.cpu[req_index])
-                self.inputs_embeds[start_offset : start_offset + overlay_len].copy_(src)
+                self.inputs_embeds.gpu[start_offset : start_offset + overlay_len].copy_(src)
 
     def _update_additional_information(self, scheduler_output: "SchedulerOutput") -> None:
         for new_req in scheduler_output.scheduled_new_reqs:
@@ -1203,7 +1203,7 @@ class OmniGPUModelRunner(GPUModelRunner):
         elif self.uses_xdrope_dim > 0:
             positions = self.xdrope_positions.gpu[:, :num_input_tokens]
         else:
-            positions = self.positions[:num_input_tokens]
+            positions = self.positions.gpu[:num_input_tokens]
 
         if is_first_rank:
             intermediate_tensors = None
