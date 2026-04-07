@@ -52,8 +52,8 @@ from vllm.entrypoints.openai.engine.protocol import (
 from vllm.entrypoints.openai.models.protocol import BaseModelPath
 from vllm.entrypoints.openai.models.serving import OpenAIServingModels
 from vllm.entrypoints.openai.orca_metrics import metrics_header
-from vllm.entrypoints.openai.realtime.connection import RealtimeConnection
-from vllm.entrypoints.openai.realtime.serving import OpenAIServingRealtime
+from vllm_omni.entrypoints.openai.realtime.connection import RealtimeConnection
+from vllm_omni.entrypoints.openai.realtime.serving import OpenAIServingRealtime
 from vllm.entrypoints.openai.responses.serving import OpenAIServingResponses
 from vllm.entrypoints.openai.server_utils import get_uvicorn_log_config
 from vllm.entrypoints.openai.speech_to_text.serving import (
@@ -1201,12 +1201,20 @@ async def streaming_speech(websocket: WebSocket):
 async def realtime_websocket(websocket: WebSocket):
     """WebSocket endpoint for OpenAI-style realtime interactions."""
     serving = getattr(websocket.app.state, "openai_serving_realtime", None)
+    chat_service = getattr(websocket.app.state, "openai_serving_chat", None)
+
     if serving is None:
         await websocket.accept()
         await websocket.send_json({"type": "error", "error": "Realtime API is not available", "code": "unsupported"})
         await websocket.close()
         return
-    connection = RealtimeConnection(websocket, serving)
+
+    if chat_service is not None:
+        from vllm_omni.entrypoints.openai.realtime.omni_connection import OmniRealtimeConnection
+        connection = OmniRealtimeConnection(websocket, serving, chat_service)
+    else:
+        connection = RealtimeConnection(websocket, serving)
+
     await connection.handle_connection()
 
 

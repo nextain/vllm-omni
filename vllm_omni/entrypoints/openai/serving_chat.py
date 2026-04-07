@@ -1876,7 +1876,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         audio_obj = CreateAudio(
             audio_tensor=audio_tensor,
             sample_rate=24000,
-            response_format="wav",
+            response_format="pcm" if stream else "wav",
             speed=1.0,
             stream_format="audio",
             base64_encode=True,
