@@ -1,11 +1,130 @@
-# CosyVoice2 KO flow 파인튜닝 설정
-# Phase 3: tools/ko_finetune/train_cosyvoice2_ko.sh 에서 사용
+# CosyVoice2 KO flow SFT config
+# flow model: stepaudio2.stepaudio2.cosyvoice2.* (설치된 stepaudio2 패키지 직접 참조)
+#   inference 시 _setup_cosyvoice2_alias()가 stepaudio2.cosyvoice2.* alias를 등록하지만
+#   training에서는 호출되지 않으므로 stepaudio2.stepaudio2.cosyvoice2.* 전체 경로 사용
+# data pipeline: cosyvoice.* from FunAudioLLM/CosyVoice (training scripts)
+# Usage: train_cosyvoice2_ko.sh (PYTHONPATH에 CosyVoice+Matcha-TTS만 포함, stepaudio2는 제외)
 
+# set random seed, so that you may reproduce your result.
+__set_seed1: !apply:random.seed [1986]
+__set_seed2: !apply:numpy.random.seed [1986]
+__set_seed3: !apply:torch.manual_seed [1986]
+__set_seed4: !apply:torch.cuda.manual_seed_all [1986]
+
+# fixed params
+sample_rate: 24000
+spk_embed_dim: 192
+qwen_pretrain_path: ''  # overridden by --qwen_pretrain_path CLI arg
+
+# train.py override_dict 호환용 더미 키 (flow만 학습, 나머지는 None으로 override됨)
+llm: null
+hift: null
+hifigan: null
+
+# flow model - EXACT architecture from MiniCPM-o snapshot flow.yaml
+# stepaudio2.cosyvoice2.* is available via stepaudio2 in the venv PYTHONPATH
+flow: !new:stepaudio2.cosyvoice2.flow.flow.CausalMaskedDiffWithXvec
+    input_size: 512
+    output_size: 80
+    spk_embed_dim: !ref <spk_embed_dim>
+    output_type: 'mel'
+    vocab_size: 6561
+    encoder: !new:stepaudio2.cosyvoice2.transformer.upsample_encoder_v2.UpsampleConformerEncoderV2
+        input_size: 512
+        output_size: 512
+        input_layer: 'linear'
+        pre_lookahead_len: 3
+        num_blocks: 6
+        num_up_blocks: 4
+        up_stride: 2
+        up_scale_factor: 2
+        attention_heads: 8
+        pos_enc_layer_type: 'rel_pos_espnet'
+        selfattention_layer_type: 'rel_selfattn'
+        key_bias: true
+        linear_units: 2048
+        dropout_rate: 0.1
+        positional_dropout_rate: 0.1
+        attention_dropout_rate: 0.1
+        normalize_before: True
+    decoder: !new:stepaudio2.cosyvoice2.flow.flow_matching.CausalConditionalCFM
+        inference_cfg_rate: 0.7
+        estimator: !new:stepaudio2.cosyvoice2.flow.decoder_dit.DiT
+            in_channels: 320
+            out_channels: 80
+            mlp_ratio: 4.0
+            depth: 16
+            num_heads: 8
+            head_dim: 64
+            hidden_size: 512
+
+# processor functions (cosyvoice.* from FunAudioLLM/CosyVoice)
+parquet_opener: !name:cosyvoice.dataset.processor.parquet_opener
+get_tokenizer: !name:cosyvoice.tokenizer.tokenizer.get_qwen_tokenizer
+    token_path: !ref <qwen_pretrain_path>
+    skip_special_tokens: True
+allowed_special: 'all'
+tokenize: !name:cosyvoice.dataset.processor.tokenize
+    get_tokenizer: !ref <get_tokenizer>
+    allowed_special: !ref <allowed_special>
+filter: !name:cosyvoice.dataset.processor.filter
+    max_length: 6000
+    min_length: 100
+    token_max_length: 200
+    token_min_length: 1
+resample: !name:cosyvoice.dataset.processor.resample
+    resample_rate: !ref <sample_rate>
+feat_extractor: !name:matcha.utils.audio.mel_spectrogram
+    n_fft: 1920
+    num_mels: 80
+    sampling_rate: !ref <sample_rate>
+    hop_size: 480
+    win_size: 1920
+    fmin: 0
+    fmax: 8000
+    center: False
+compute_fbank: !name:cosyvoice.dataset.processor.compute_fbank
+    feat_extractor: !ref <feat_extractor>
+    num_frames: 960
+compute_whisper_fbank: !name:cosyvoice.dataset.processor.compute_whisper_fbank
+    num_frames: 960
+parse_embedding: !name:cosyvoice.dataset.processor.parse_embedding
+    normalize: True
+shuffle: !name:cosyvoice.dataset.processor.shuffle
+    shuffle_size: 1000
+sort: !name:cosyvoice.dataset.processor.sort
+    sort_size: 500
+batch: !name:cosyvoice.dataset.processor.batch
+    batch_type: 'dynamic'
+    max_frames_in_batch: 2000
+padding: !name:cosyvoice.dataset.processor.padding
+    use_spk_embedding: False
+
+# dataset processor pipeline
+data_pipeline: [
+    !ref <parquet_opener>,
+    !ref <tokenize>,
+    !ref <filter>,
+    !ref <resample>,
+    !ref <compute_fbank>,
+    !ref <parse_embedding>,
+    !ref <compute_whisper_fbank>,
+    !ref <shuffle>,
+    !ref <sort>,
+    !ref <batch>,
+    !ref <padding>,
+]
+
+# KO SFT train_conf
+# Upstream SFT baseline: lr=1e-5, scheduler=constantlr, accum_grad=2, max_epoch=200
+# KO 2h override: max_epoch=20 (small dataset), grad_clip=1.0, accum_grad=1
 train_conf:
-  max_epoch: 20
-  batch_size: 8        # global batch (2-GPU DDP: per-GPU 4)
-  dtype: bf16
-  grad_clip: 1.0
-  accum_grad: 1
-  save_interval: 5     # 5 epoch마다 체크포인트 저장
-  log_interval: 10
+    optim: adam
+    optim_conf:
+        lr: 1.0e-5
+    scheduler: constantlr  # ConstantLR ignores scheduler_conf, no warmup
+    max_epoch: 20
+    grad_clip: 1.0
+    accum_grad: 1
+    log_interval: 10
+    save_per_step: -1

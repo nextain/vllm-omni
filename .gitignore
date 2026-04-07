@@ -247,3 +247,8 @@ tmp_test
 vllm_omni/_version.py
 # output files
 *.wav
+
+# KO fine-tuning outputs (multi-GB, never commit)
+tools/ko_finetune/output/
+tools/ko_finetune/CosyVoice/
+data/ko_2h/

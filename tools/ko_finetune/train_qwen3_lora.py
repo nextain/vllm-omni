@@ -4,16 +4,23 @@
 실행 위치: repo 루트
 실행: python3 tools/ko_finetune/train_qwen3_lora.py
 """
+import os, sys
 from peft import LoraConfig, get_peft_model
-from transformers import AutoModelForCausalLM, AutoTokenizer, TrainingArguments, Trainer
+from transformers import (AutoModelForCausalLM, AutoTokenizer,
+                          TrainingArguments, Trainer,
+                          DataCollatorForLanguageModeling)
 from datasets import Dataset
-import torch, json, os
+import torch, json
 
 DATA_PATH = 'data/naia_persona.jsonl'
 OUTPUT_DIR = 'tools/ko_finetune/output/naia_lora'
 MODEL_ID = 'openbmb/MiniCPM-o-4_5'
 
-def load_dataset():
+# 실행 위치 확인: repo 루트에서 실행해야 데이터 경로가 잘링
+if not os.path.exists(DATA_PATH):
+    sys.exit(f"❌ {DATA_PATH} 없음. repo 루트(vllm-omni/)에서 실행할 것")
+
+def load_conversations():
     conversations = []
     with open(DATA_PATH, encoding='utf-8') as f:
         for line in f:
@@ -22,36 +29,19 @@ def load_dataset():
                 conversations.append(json.loads(line))
     return conversations
 
-def format_conversation(conv):
-    """conversations 리스트 -> 단일 텍스트"""
-    text = ''
-    for msg in conv.get('messages', []):
-        role = msg['role']
-        content = msg['content']
-        if role == 'system':
-            text += f'<|im_start|>system
-{content}<|im_end|>\n'
-        elif role == 'user':
-            text += f'<|im_start|>user
-{content}<|im_end|>\n'
-        elif role == 'assistant':
-            text += f'<|im_start|>assistant
-{content}<|im_end|>\n'
-    return text
-
 def main():
-    print(f'데이터 로드: {DATA_PATH}')
-    raw_data = load_dataset()
-    print(f'  대화 수: {len(raw_data)}개')
+    print(f"데이터 로드: {DATA_PATH}")
+    raw_data = load_conversations()
+    print(f"  대화 수: {len(raw_data)}개")
 
-    print(f'모델 로드: {MODEL_ID}')
-    # AutoModelForCausalLM으로 로드 + target_modules 명시 -> Thinker LLM 레이어만 LoRA 적용
-    # (audio/vision encoder는 q_proj 등 해당 이름 없음 - 자동 제외)
+    print(f"모델 로드: {MODEL_ID}")
     tokenizer = AutoTokenizer.from_pretrained(MODEL_ID, trust_remote_code=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
     model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID,
         torch_dtype=torch.bfloat16,
-        device_map='cuda:0',  # LoRA는 300개 데이터 + 소수 epoch으로 단일 GPU 충분; Phase 3과 동시 실행 안 함
+        device_map='cuda:0',
         trust_remote_code=True,
     )
 
@@ -65,10 +55,31 @@ def main():
     model = get_peft_model(model, lora_config)
     model.print_trainable_parameters()
 
-    # 데이터셋 포맷
-    texts = [format_conversation(c) for c in raw_data]
-    encodings = tokenizer(texts, truncation=True, max_length=1024, padding=True, return_tensors='pt')
-    dataset = Dataset.from_dict({'input_ids': encodings['input_ids'], 'labels': encodings['input_ids']})
+    # tokenizer.apply_chat_template() 사용 - 수동 템플릿 대신 모델 등록 테일릿 활용
+    # MiniCPM-o-4.5의 tokenizer_config.json chat_template이 정확한 포맷으로 포맷팅
+    texts = [
+        tokenizer.apply_chat_template(
+            conv['messages'],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        for conv in raw_data
+    ]
+
+    # 데이터셋 포맷 - 개별 토크나이즈 (padding=False)
+    # DataCollatorForLanguageModeling이 배치마다 패딩 + labels 마스킹(-100) 자동 수행
+    tokenized = tokenizer(
+        texts,
+        truncation=True,
+        max_length=1024,
+        padding=False,  # collator가 패딩 처리
+    )
+    dataset = Dataset.from_dict({
+        'input_ids': tokenized['input_ids'],
+        'attention_mask': tokenized['attention_mask'],
+    })
+
+    data_collator = DataCollatorForLanguageModeling(tokenizer=tokenizer, mlm=False)
 
     training_args = TrainingArguments(
         output_dir=OUTPUT_DIR,
@@ -85,13 +96,14 @@ def main():
         model=model,
         args=training_args,
         train_dataset=dataset,
+        data_collator=data_collator,
     )
 
-    print('학습 시작...')
+    print("학습 시작...")
     trainer.train()
     model.save_pretrained(OUTPUT_DIR)
     tokenizer.save_pretrained(OUTPUT_DIR)
-    print(f'✅ LoRA 어답터 저장: {OUTPUT_DIR}')
+    print(f"✅ LoRA 어답터 저장: {OUTPUT_DIR}")
 
 if __name__ == '__main__':
     main()
