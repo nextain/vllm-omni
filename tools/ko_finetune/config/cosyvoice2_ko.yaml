@@ -1,0 +1,11 @@
+# CosyVoice2 KO flow 파인튜닝 설정
+# Phase 3: tools/ko_finetune/train_cosyvoice2_ko.sh 에서 사용
+
+train_conf:
+  max_epoch: 20
+  batch_size: 8        # global batch (2-GPU DDP: per-GPU 4)
+  dtype: bf16
+  grad_clip: 1.0
+  accum_grad: 1
+  save_interval: 5     # 5 epoch마다 체크포인트 저장
+  log_interval: 10

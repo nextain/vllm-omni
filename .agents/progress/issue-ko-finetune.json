@@ -1,0 +1,43 @@
+{
+  "issue": "#1 feat(ko-tts): CosyVoice2 한국어 파인튜닝 + #3 feat(ko-llm): Qwen3 Thinker LoRA",
+  "branch": "feat/ko-finetune",
+  "current_phase": "build",
+  "gates_cleared": [
+    "understand",
+    "scope",
+    "investigate",
+    "plan"
+  ],
+  "current_task": "Build 완료 u2014 리븷 + E2E 테스트 대기",
+  "key_decisions": [
+    "FunAudioLLM/CosyVoice 공식 코드 활용 (minicpmo-utils는 Parquet+DeepSpeed 필수 — PoC 과대)",
+    "2h 서브셋 (1,240개) 로 파이프라인 E2E 확인 먼저",
+    "flow.pt만 파인튜닝 (hift.pt 보코더 고정)",
+    "LoRA rank=16, target_modules=[q/k/v/o_proj], 단일 GPU"
+  ],
+  "files_created": [
+    "tools/ko_finetune/setup.sh",
+    "tools/ko_finetune/preprocess_kspon.py",
+    "tools/ko_finetune/train_cosyvoice2_ko.sh",
+    "tools/ko_finetune/config/cosyvoice2_ko.yaml",
+    "tools/ko_finetune/export_flow.py",
+    "tools/ko_finetune/train_qwen3_lora.py",
+    "data/naia_persona.jsonl (10개 샘플, 확장 필요)",
+    "scripts/serve_ko.sh",
+    "scripts/ko_e2e_test.sh"
+  ],
+  "next_steps": [
+    "distrobox vllm-dev 환경에서 setup.sh 실행 (CosyVoice 클론 + 의존성)",
+    "preprocess_kspon.py 실행 (KsponSpeech_01.zip 전처리)",
+    "train_cosyvoice2_ko.sh 실행 (2h, 20 epoch, ~12~15분)",
+    "export_flow.py로 flow.pt 교체",
+    "naia_persona.jsonl 확장 (300개 대화 목표)",
+    "train_qwen3_lora.py 실행",
+    "ko_e2e_test.sh E2E 검증"
+  ],
+  "plan_review": {
+    "total_passes": 22,
+    "result": "2_consecutive_clean",
+    "auto_fixes": 20
+  }
+}
