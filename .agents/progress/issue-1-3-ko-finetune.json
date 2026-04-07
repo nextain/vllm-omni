@@ -1,0 +1,55 @@
+{
+  "issue": "#1 CosyVoice2 KO TTS + #3 Qwen3 Thinker LoRA",
+  "issue_url_1": "https://github.com/nextain/vllm-omni/issues/1",
+  "issue_url_3": "https://github.com/nextain/vllm-omni/issues/3",
+  "current_phase": "build",
+  "current_task": "Phase 3 차단 — 아키텍처 호환성 문제 (training wrapper 작성 필요)",
+  "gates_cleared": ["understand", "scope", "plan"],
+  "blocker": {
+    "type": "architectural_incompatibility",
+    "description": "stepaudio2.cosyvoice2.flow.flow.CausalMaskedDiffWithXvec는 inference-only (forward() 없음). FunAudioLLM 학습 프레임워크는 model(batch, device) → {'loss'} 인터페이스를 기대하지만 stepaudio2 클래스엔 없음.",
+    "chosen_option": "Option A: training wrapper 서브클래스 작성",
+    "rationale": "self.decoder.estimator (DiT)는 일반 nn.Module로 훈련 가능. forward()에서 CFM loss 직접 계산."
+  },
+  "next_session_task": {
+    "action": "tools/ko_finetune/stepaudio2_training_wrapper.py 작성",
+    "class": "CausalMaskedDiffWithXvecTrainable(CausalMaskedDiffWithXvec)",
+    "forward_logic": [
+      "1. token → encoder → encoder_proj → h (B,T',80) → transpose (B,80,T')",
+      "2. embedding F.normalize → spk_embed_affine_layer → (B,80)",
+      "3. x1 = feat.T (B,80,T_mel), x0 = randn_like, t ~ Uniform(0,1)",
+      "4. xt = t*x1 + (1-t)*x0, v_target = x1 - x0",
+      "5. mel_mask = (~make_pad_mask(feat_len)).unsqueeze(1)",
+      "6. cond = zeros_like(x1)",
+      "7. v_pred = self.decoder.estimator.forward(xt, mel_mask, h, t, spks, cond)",
+      "8. loss = F.mse_loss(v_pred*mel_mask, v_target*mel_mask)"
+    ],
+    "estimator_signature": "estimator.forward(x, mask, mu, t, spks, cond) → velocity (B,80,T)",
+    "encoder_call": "self.encoder.forward(token_emb, token_len) — NO streaming param",
+    "yaml_change": "flow: !new:stepaudio2_training_wrapper.CausalMaskedDiffWithXvecTrainable",
+    "pythonpath_change": "train_cosyvoice2_ko.sh에 tools/ko_finetune 추가",
+    "key_refs": [
+      "stepaudio2 inference(): /home/luke/.venvs/vllm-omni/lib/python3.12/site-packages/stepaudio2/cosyvoice2/flow/flow.py L70-112",
+      "estimator call in solve_euler(): flow_matching.py L42-95",
+      "FunAudioLLM reference forward(): CosyVoice/cosyvoice/flow/flow.py"
+    ]
+  },
+  "completed_phases": [
+    "Phase 1: setup.sh (환경 설정)",
+    "Phase 2: preprocess_kspon.py (1240샘플 → 791 train / 198 dev)",
+    "Phase 3 스크립트 작성 완료 — 12개 오류 연속 수정, architecture blocker까지 도달"
+  ],
+  "patches_applied": [
+    "tools/ko_finetune/CosyVoice/cosyvoice/tokenizer/tokenizer.py: trust_remote_code=True",
+    "tools/ko_finetune/CosyVoice/cosyvoice/dataset/processor.py: torchaudio.load → soundfile monkey-patch (torchaudio 2.10 torchcodec 이슈)",
+    "tools/ko_finetune/CosyVoice/third_party/Matcha-TTS/matcha/utils/__init__.py: 불필요 import 제거 (lightning/matplotlib 캐스케이드 방지)",
+    "train_cosyvoice2_ko.sh: --onnx_path, --num_workers 4, --prefetch 4 추가, STEPAUDIO2_ROOT PYTHONPATH 제거",
+    "cosyvoice2_ko.yaml: stepaudio2.cosyvoice2.* 경로, llm/hift/hifigan null 키 추가"
+  ],
+  "key_decisions": [
+    "PYTHONPATH에 stepaudio2/ 디렉토리 추가 금지 — 설치된 stepaudio2 패키지를 새도잉해서 import 실패",
+    "torchaudio.load 대신 soundfile monkey-patch — torchaudio 2.10이 torchcodec 요구하지만 FFmpeg 공유라이브러리 없음",
+    "matcha/utils/__init__.py 비우기 — lightning/matplotlib 등 불필요한 학습유틸 cascade 차단",
+    "CausalConditionalCFM.forward()는 @torch.inference_mode() — compute_loss() 없음, estimator 직접 호출 필요"
+  ]
+}
