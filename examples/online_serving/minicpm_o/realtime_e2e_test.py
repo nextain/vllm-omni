@@ -2,6 +2,7 @@ import asyncio
 import base64
 import json
 import argparse
+import sys
 import time
 import numpy as np
 import websockets
@@ -21,9 +22,10 @@ async def test_realtime_audio_to_audio(audio_path: str, host: str, port: int, mo
             print(f"FAILED: Expected session.created, got {response['type']}")
             return
 
-        # 2. Update session (optional, but good to test)
+        # 2. Update session (required: upstream session.update needs 'model' field)
         await ws.send(json.dumps({
             "type": "session.update",
+            "model": model,
             "session": {
                 "instructions": "You are a helpful assistant. Keep your responses very short.",
                 "temperature": 0.6
@@ -99,6 +101,7 @@ async def test_realtime_audio_to_audio(audio_path: str, host: str, port: int, mo
             print("\nRESULT: SUCCESS")
         else:
             print("\nRESULT: FAILED (Missing audio or transcript)")
+            sys.exit(1)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

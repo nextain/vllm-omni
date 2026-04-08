@@ -2,16 +2,29 @@
 vllm-omni extension of vllm realtime protocol.
 Adds full-conversation events per OpenAI Realtime API spec.
 
+Upstream protocol (vllm 0.18+) already provides:
+  - SessionCreated, SessionUpdate
+  - InputAudioBufferAppend, InputAudioBufferCommit
+  - TranscriptionDelta, TranscriptionDone
+  - ErrorEvent
+
+This module adds omni-specific events for audio output:
+  - ResponseCreate, ResponseCancel (client -> server)
+  - ResponseCreated, ResponseAudioDelta, ResponseAudioDone
+  - ResponseAudioTranscriptDelta, ResponseAudioTranscriptDone
+  - ResponseDone, ResponseCancelled (server -> client)
+
 Reference: https://platform.openai.com/docs/api-reference/realtime-client-events
 """
-from typing import Literal, Optional
-from vllm.entrypoints.openai.protocol import OpenAIBaseModel
-from pydantic import Field
+from typing import Literal
+
+from vllm.entrypoints.openai.engine.protocol import OpenAIBaseModel
 from vllm.utils import random_uuid
+from pydantic import Field
 
 
 # ============================================================
-# Client -> Server
+# Client -> Server (omni extensions)
 # ============================================================
 
 class ResponseCreate(OpenAIBaseModel):
@@ -25,7 +38,7 @@ class ResponseCancel(OpenAIBaseModel):
 
 
 # ============================================================
-# Server -> Client
+# Server -> Client (omni extensions)
 # ============================================================
 
 class ResponseCreated(OpenAIBaseModel):
@@ -67,13 +80,3 @@ class ResponseDone(OpenAIBaseModel):
 class ResponseCancelled(OpenAIBaseModel):
     """Server: response cancelled."""
     type: Literal["response.cancelled"] = "response.cancelled"
-
-
-class InputAudioBufferSpeechStarted(OpenAIBaseModel):
-    """Server: VAD detected speech start."""
-    type: Literal["input_audio_buffer.speech_started"] = "input_audio_buffer.speech_started"
-
-
-class InputAudioBufferSpeechStopped(OpenAIBaseModel):
-    """Server: VAD detected speech stop."""
-    type: Literal["input_audio_buffer.speech_stopped"] = "input_audio_buffer.speech_stopped"

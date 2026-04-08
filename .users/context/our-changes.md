@@ -139,6 +139,39 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 
 ---
 
+## WebSocket 엔드포인트 현황 (2026-04-07 기준)
+
+| 엔드포인트 | 상태 | 비고 |
+|-----------|:----:|------|
+| POST /v1/chat/completions (non-stream) | ✅ E2E 작동 | 텍스트+오디오 함께 반환, ~28s |
+| POST /v1/chat/completions (stream SSE) | ✅ 확인 | base64 WAV 청크, 0.9s TTFP |
+| WebSocket /v1/realtime | ✅ E2E PASS | OpenAI Realtime API — 오디오 입력 → 트랜스크립트+오디오 출력, TTFP 0.61s |
+| ~~WebSocket /v1/omni~~ | 🗑️ 제거됨 (#4) | 독자 규격 → ref/omni_duplex_v1/ 에 보관 |
+
+## 완료된 작업 (2026-04-08)
+
+| 이슈 | 내용 | 상태 |
+|------|------|:----:|
+| nextain/vllm-omni#4 | /v1/omni 제거, ref/omni_duplex_v1/ 이동 | ✅ |
+| nextain/vllm-omni#5 | OpenAI Realtime API protocol 이벤트 | ✅ E2E PASS |
+| nextain/vllm-omni#6 | OmniRealtime 오디오 출력 파이프라인 | ✅ E2E PASS |
+
+## 대기 중 (naia-os)
+
+| 이슈 | 내용 | 상태 |
+|------|------|:----:|
+| nextain/naia-os#219 | minicpm-o.ts /v1/realtime 전환 | 🔜 |
+| nextain/naia-os#220 | Silero ONNX VAD 교체 | 🔜 |
+
+## 방향 원칙 (2026-04-07 재확인)
+
+- `/v1/realtime` OpenAI Realtime API 호환 경로만 사용
+- 독자 엔드포인트/규격 절대 금지
+- upstream vllm realtime 모듈은 서브클래싱으로만 확장 (직접 수정 불가)
+- 클라이언트 책임(VAD 등)은 Naia에, 서버 책임은 vllm-omni에
+
+---
+
 ## 신뢰도 상태
 
 | 항목 | 상태 | 비고 |
@@ -155,6 +188,10 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | conversation_benchmark.py | ✅ | 레이블 수정 |
 | language_test.py | ✅ | stt_cer/word_accuracy 분리, evaluate_conversation 수정 |
 | voicebench_runner.py | ✅ | SampleResult 필드명, 예외 처리, CATEGORIES deepcopy |
+| realtime/serving.py | ✅ | upstream pass-through 서브클래스 |
+| realtime/protocol.py | ✅ | omni 이벤트, OpenAIBaseModel |
+| realtime/connection.py | ✅ | upstream re-export |
+| realtime/omni_connection.py | ✅ | 9-pass 적대적 리뷰, 2연속 클린 |
 | offline_inference/minicpm_o/end2end.py | ✅ | 8패스 적대적 리뷰; SamplingParams 정렬 완료 |
 | offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8패스 리뷰; init_timeout, use_image_audio 추가 |
 | offline_inference/minicpm_o/run_*.sh | ✅ | 파일 존재 검사, PROMPTS_FILE 변수 재사용 |

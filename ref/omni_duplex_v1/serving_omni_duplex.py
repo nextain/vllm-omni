@@ -53,8 +53,8 @@ _DEFAULT_IDLE_TIMEOUT = 60.0
 _DEFAULT_CONFIG_TIMEOUT = 10.0
 _PCM_SAMPLE_RATE = 16000       # client sends 16kHz PCM16 mono
 _OUTPUT_SAMPLE_RATE = 24000    # MiniCPM-o Code2Wav outputs 24kHz
-_MAX_CONFIG_SIZE = 4096        # bytes
-_MAX_AUDIO_FRAME_SIZE = 64 * 1024  # 64 KB per binary frame
+_MAX_CONFIG_SIZE = 32768       # bytes (system prompt can be several KB)
+_MAX_AUDIO_FRAME_SIZE = 1 * 1024 * 1024  # 1 MB per binary frame (client sends full turn as one frame)
 _MIN_PCM_BYTES = 16000         # 0.5s at 16kHz 16-bit mono
 
 
@@ -122,6 +122,12 @@ class OmniFullDuplexHandler:
 
                 await websocket.send_json({"type": "turn.start"})
                 transcript = await self._run_turn(websocket, model_name, config, messages)
+
+                # Compact audio history: replace base64 audio_url with a short placeholder
+                # so conversation history does not grow unboundedly with large WAV payloads.
+                if pcm_bytes is not None:
+                    messages[-1] = {"role": "user", "content": "[audio input]"}
+
                 # Store assistant reply as plain text (audio not preserved in history).
                 # Known limitation: multi-turn audio context not maintained.
                 messages.append({"role": "assistant", "content": transcript})
@@ -238,13 +244,14 @@ class OmniFullDuplexHandler:
                 if msg_type == "input.done":
                     total = b"".join(pcm_chunks)
                     if len(total) < _MIN_PCM_BYTES:
-                        # Audio too short to be meaningful — close session
+                        # Audio too short (cough, background noise, accidental tap).
+                        # Non-fatal: reset buffer and wait for next turn input.
                         await self._send_error(
                             websocket,
-                            f"Audio too short ({len(total)} bytes < {_MIN_PCM_BYTES} minimum), closing session",
+                            f"Audio too short ({len(total)} bytes < {_MIN_PCM_BYTES} minimum), please speak again",
                         )
-                        await websocket.close()
-                        return None, None
+                        pcm_chunks = []
+                        continue
                     return total, None
 
                 elif msg_type == "input.text":
@@ -283,7 +290,7 @@ class OmniFullDuplexHandler:
         request = ChatCompletionRequest(
             model=model_name,
             messages=messages,  # type: ignore[arg-type]
-            modalities=["audio"],
+            modalities=["audio", "text"],  # text tokens enable transcript.delta for UI display
             stream=True,
             chat_template_kwargs={"use_tts_template": True},
             max_tokens=config.max_tokens,

@@ -109,7 +109,6 @@ from vllm_omni.entrypoints.openai.protocol.videos import (
 )
 from vllm_omni.entrypoints.openai.serving_chat import OmniOpenAIServingChat
 from vllm_omni.entrypoints.openai.serving_speech import OmniOpenAIServingSpeech
-from vllm_omni.entrypoints.openai.serving_omni_duplex import OmniFullDuplexHandler
 from vllm_omni.entrypoints.openai.serving_speech_stream import OmniStreamingSpeechHandler
 from vllm_omni.entrypoints.openai.serving_video import OmniOpenAIServingVideo, ReferenceImage
 from vllm_omni.entrypoints.openai.storage import STORAGE_MANAGER
@@ -818,13 +817,6 @@ async def omni_init_app_state(
         request_logger=request_logger,
     )
 
-    if state.openai_serving_chat is not None:
-        state.openai_omni_duplex = OmniFullDuplexHandler(
-            chat_service=state.openai_serving_chat,
-        )
-    else:
-        state.openai_omni_duplex = None
-
     state.openai_serving_video = OmniOpenAIServingVideo(
         engine_client,
         model_name=served_model_names[0] if served_model_names else None,
@@ -1216,24 +1208,6 @@ async def realtime_websocket(websocket: WebSocket):
         connection = RealtimeConnection(websocket, serving)
 
     await connection.handle_connection()
-
-
-@router.websocket("/v1/omni")
-async def omni_duplex_websocket(websocket: WebSocket):
-    """Full-duplex omni: PCM16 audio in -> omni LLM -> WAV audio out.
-
-    Protocol:
-        Client sends session.config (JSON text), then binary audio frames,
-        then input.done (JSON text). Server streams transcript.delta + binary WAV chunks.
-        See serving_omni_duplex.py for full protocol documentation.
-    """
-    handler = getattr(websocket.app.state, "openai_omni_duplex", None)
-    if handler is None:
-        await websocket.accept()
-        await websocket.send_json({"type": "error", "message": "Omni duplex not available"})
-        await websocket.close()
-        return
-    await handler.handle_session(websocket)
 
 
 # Health and Model endpoints for diffusion mode

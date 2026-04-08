@@ -141,29 +141,47 @@ Input (text + image/audio)
 
 ---
 
-## WebSocket Endpoint Status (as of 2026-04-06)
+## WebSocket Endpoint Status (as of 2026-04-08)
 
 | Endpoint | Status | Notes |
 |----------|:------:|-------|
 | POST /v1/chat/completions (non-stream) | ✅ E2E working | text + audio returned together, ~28s |
 | POST /v1/chat/completions (stream=True SSE) | ✅ confirmed | audio chunks as base64 WAV, 0.9s TTFP |
-| GET /v1/realtime (WebSocket) | ⚠️ ASR only | transcription.delta/done only, no audio output |
-| GET /v1/omni (WebSocket) | ✅ **implemented** (c3ad9985) | full-duplex: PCM16 in → WAV chunks out |
+| WebSocket /v1/realtime | ✅ E2E PASS | OpenAI Realtime API — audio in → transcript + audio out, TTFP 0.61s |
+| ~~WebSocket /v1/omni~~ | 🗑️ 제거됨 (#4) | 독자 규격 → ref/omni_duplex_v1/ 에 보관 |
 
-## /v1/omni Protocol
+### /v1/realtime Implementation (2026-04-08)
 
-See `vllm_omni/entrypoints/openai/serving_omni_duplex.py` for full docs.
+- `realtime/serving.py`: upstream `OpenAIServingRealtime` 상속 (pass-through)
+- `realtime/protocol.py`: omni 전용 이벤트 (ResponseCreate, ResponseAudioDelta 등)
+- `realtime/connection.py`: upstream `RealtimeConnection` re-export
+- `realtime/omni_connection.py`: full audio conversation loop
+  - PCM16 → WAV → audio_url data URI → ChatCompletionRequest (stream=True) → SSE → WebSocket events
+  - engine abort on cancel/disconnect
+  - history compaction (audio → placeholder)
+- 9-pass adversarial review, 2 consecutive clean
 
-Client sends: session.config (text) -> binary PCM16 frames -> input.done (text)  
-Server sends: turn.start -> transcript.delta -> audio.start -> binary WAV chunks -> audio.done -> turn.done
+## Completed Work (2026-04-08)
 
-**Key design decisions:**
-- Reuses `OmniOpenAIServingChat.create_chat_completion(raw_request=None)` - no new inference path
-- `format: "wav_chunk"` - each binary frame is a self-contained WAV
-- `abort_id = f"chatcmpl-{pre_uuid}"` pre-computed for safe early-disconnect abort
-- Does NOT use `_add_streaming_input_request` (PR #2208) - MiniCPM-o needs full Thinker output; no TTFP benefit
+| Issue | 내용 | 상태 |
+|-------|------|:----:|
+| nextain/vllm-omni#4 | /v1/omni 제거, ref/omni_duplex_v1/ 이동 | ✅ |
+| nextain/vllm-omni#5 | OpenAI Realtime API protocol events | ✅ E2E PASS |
+| nextain/vllm-omni#6 | OmniRealtime 오디오 출력 파이프라인 | ✅ E2E PASS |
 
-**Known v1 limitations:** Unbounded conversation history; assistant audio not in history; E2E test pending.
+## Pending (naia-os side)
+
+| Issue | 내용 | 상태 |
+|-------|------|:----:|
+| nextain/naia-os#219 | minicpm-o.ts /v1/realtime 전환 | 🔜 |
+| nextain/naia-os#220 | Silero ONNX VAD 교체 | 🔜 |
+
+## 방향 원칙 (2026-04-07 재확인)
+
+- `/v1/realtime` OpenAI Realtime API 호환 경로만 사용
+- 독자 엔드포인트/규격 절대 금지
+- upstream vllm realtime 모듈은 서브클래싱으로만 확장 (직접 수정 불가)
+- 클라이언트 책임(VAD 등)은 Naia에, 서버 책임은 vllm-omni에
 
 ---
 
@@ -183,6 +201,10 @@ Server sends: turn.start -> transcript.delta -> audio.start -> binary WAV chunks
 | conversation_benchmark.py | ✅ | Label correction |
 | language_test.py | ✅ | stt_cer/word_accuracy separation, evaluate_conversation fix |
 | voicebench_runner.py | ✅ | SampleResult fields, exception handling, CATEGORIES deepcopy |
+| realtime/serving.py | ✅ | upstream pass-through subclass |
+| realtime/protocol.py | ✅ | omni events, OpenAIBaseModel |
+| realtime/connection.py | ✅ | upstream re-export |
+| realtime/omni_connection.py | ✅ | 9-pass adversarial review, 2 consecutive clean |
 | offline_inference/minicpm_o/end2end.py | ✅ | 8-pass adversarial review; SamplingParams aligned |
 | offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8-pass review; init_timeout, use_image_audio added |
 | offline_inference/minicpm_o/run_*.sh | ✅ | File existence checks, PROMPTS_FILE variable reuse |
