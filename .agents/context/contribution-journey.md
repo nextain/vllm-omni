@@ -118,7 +118,7 @@ contribution methodology**.
 | E2E validated hardware | 2× RTX 3090 |
 | async_chunk streaming | implemented, E2E pending |
 | Korean TTS | ⚠️ known failure, documented |
-| Stop token 6561 | ⚠️ known issue → tracked separately, upstream collaboration pending |
+| Stop token 6561 | ✅ fixed (2026-04-14) — root cause was Talker sampling params mismatch (top_p=1.0, top_k=50, temp=0.9 vs reference). All 3 YAMLs updated to match TTSSamplingParams. |
 
 **Upstream issue reference**: vllm-omni#1182 (Allyyi's parallel work, same model)
 
@@ -151,6 +151,39 @@ internal history but are superseded by `BENCHMARK.md` / `BENCHMARK.ko.md`.
 - **8-pass adversarial headless review** on offline inference scripts → 12 CRITICAL fixes applied
 - **Key bugs caught in review**: SamplingParams values misaligned with minicpmo.yaml, shared dict reference for multi-prompt, use_image_audio missing from async_chunk, VLLM_WORKER_MULTIPROC_METHOD set after imports, --init-timeout missing from async_chunk
 - 2 consecutive clean passes achieved (Pass 7 + Pass 8)
+
+### Phase 10: 323s gibberish audio root cause fix (2026-04-14)
+
+**Symptoms**: Every audio response was 323 seconds of gibberish noise instead of 2-5s speech.
+
+**Root cause**: Two independent bugs, both contributing:
+
+1. **Talker sampling params mismatch** — YAML had `top_p=1.0` (missing), `top_k=50`, `temperature=0.9` vs
+   reference `TTSSamplingParams` in `modeling_minicpmo.py` (`top_k=25, top_p=0.85, temp=0.8, min_new_token=50`).
+   With `top_p=1.0`, the model rarely generates stop token 6561 u2192 runs to `max_tokens=4096` u2192 u00d7 time.
+   Fixed: aligned all 3 YAMLs to reference values.
+
+2. **left_context_size ignored in Code2Wav** u2014 `forward()` received (new 25 + left_ctx 25) = 50 tokens,
+   processed all 50, returned full ~2s audio. Left context was prepended to smooth chunk boundaries,
+   but its audio was already emitted in the previous chunk. Fix: proportional tail trim:
+   `samples_to_keep = math.ceil(wav_len * new_token_count / total)`, `wav[..., -samples_to_keep:]`.
+
+**Combined effect**: 4096 u00f7 25 per chunk u00d7 2u00d7 audio per chunk = 327-second output.
+
+**Additional fixes found during 13-pass adversarial review**:
+- `codes.shape[-1]` (batch max-len) u2192 `token.shape[1]` (per-item len) for correct batch trimming
+- Empty tensor (`non_empty`) filter before `torch.cat` to prevent shape mismatch crash
+- 1D wav guard (`wav.unsqueeze(0)`) before `_trim_silence` which requires 2D input
+- `unsqueeze(1)` after `_trim_silence` to produce 3D `[1, 1, audio_len]` for consistent output shape
+- `round()` u2192 `math.ceil()` to never lose the last new-token sample to integer truncation
+- `max_model_len: 4096` added to Stage 1 in minicpmo.yaml and minicpmo_48gb_2gpu.yaml (was missing)
+- `min_tokens: 50` added (matches `min_new_token=50` in reference, prevents premature EOS on short responses)
+
+**Tests**: 6 CPU unit tests added to `TestMiniCPMOCode2WavForwardTrimming` — all passing.
+
+**E2E status**: Code review complete (13-pass, 2 consecutive clean). Server E2E pending.
+
+---
 
 ## Files to Review When Resuming
 

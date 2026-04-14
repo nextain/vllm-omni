@@ -98,6 +98,36 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 
 ---
 
+### Phase 10: 323초 gibberish 오디오 근본 원인 수정 (2026-04-14)
+
+**증상**: 모든 응답 오디오가 2~5초 음성 대신 323초 gibberish 노이즈.
+
+**근본 원인**: 두 개의 독립적인 버그의 복합작용:
+
+1. **Talker 샘플링 파라미터 불일치** — YAML의 `top_p=1.0`(누락), `top_k=50`, `temp=0.9`가
+   `modeling_minicpmo.py`의 `TTSSamplingParams` 기준(`top_k=25, top_p=0.85, temp=0.8, min_new_token=50`)과 달랐음.
+   `top_p=1.0` 상태에서 stop token 6561이 거의 생성되지 않아 `max_tokens=4096`까지 실행됨.
+   수정: 3개 YAML 모두 기준값으로 정렬.
+
+2. **left_context_size 무시** — `forward()`가 (new 25 + left_ctx 25) = 50토큰을 처리하고 ~2s 오디오 전체 출력.
+   left context는 청크 경계 매끄러움을 위해 prepend되지만 이미 이전 청크에서 출력됨.
+   수정: `math.ceil(wav_len * new_token_count / total)`, `wav[..., -samples_to_keep:]` 비례 trimming.
+
+**복합 효과**: 4096 ÷ 25 per chunk × 2× audio per chunk = 327초 출력.
+
+**13패스 적대적 리뷰에서 추가 발견된 수정사항**:
+- `codes.shape[-1]` (배치 max-len) → `token.shape[1]` (per-item len)
+- 빈 텐서 `non_empty` 필터 후 `torch.cat` (없으면 shape 불일치 crash)
+- 1D wav guard (`wav.unsqueeze(0)`) — `_trim_silence`은 2D 입력 필요
+- `_trim_silence` 후 `unsqueeze(1)` → 3D `[1, 1, audio_len]` 일관 출력
+- `round()` → `math.ceil()` (단수 트런케이션으로 새 토큰 1샘플 손uc2e4 방uc9c0)
+- `max_model_len: 4096` 추가 (Stage 1, minicpmo.yaml + minicpmo_48gb_2gpu.yaml 누락)
+- `min_tokens: 50` 추가 (reference `min_new_token=50` 일치, 조기 EOS 방지)
+
+**테스트**: `TestMiniCPMOCode2WavForwardTrimming` 6개 CPU 테스트 추가 — 전체 pass.
+
+---
+
 ## 핵심 upstream 발견사항
 
 ### vllm-omni 내부에 대해 발견한 것들
@@ -128,7 +158,7 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 | E2E 검증 하드웨어 | 2× RTX 3090 |
 | async_chunk 스트리밍 | 구현 완료, E2E 대기 |
 | 한국어 TTS | ⚠️ 알려진 실패, 문서화 |
-| Stop token 6561 | ⚠️ 알려진 이슈 → 별도 추적, upstream 협력 예정 |
+| Stop token 6561 | ✅ 수정 (2026-04-14) — Talker 샘플링 파라미터 불일치가 근본 원인. 3개 YAML 모두 TTSSamplingParams 기준으로 수정. |
 
 **Upstream 이슈 참조**: vllm-omni#1182 (Allyyi의 병행 작업, 동일 모델)
 

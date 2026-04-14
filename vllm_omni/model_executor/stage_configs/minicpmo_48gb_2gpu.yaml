@@ -65,19 +65,22 @@ stage_args:
       engine_output_type: latent
       enable_prefix_caching: false
       max_num_batched_tokens: 4096
+      max_model_len: 4096          # cap KV cache to prevent OOM (matches async_chunk config)
       distributed_executor_backend: "mp"
       tensor_parallel_size: 1
       limit_mm_per_prompt: {image: 0, video: 0, audio: 0}
     engine_input_source: [0]
     custom_process_input_func: vllm_omni.model_executor.stage_input_processors.minicpm_o.thinker2talker
     default_sampling_params:
-      temperature: 0.9
-      top_k: 50
-      max_tokens: 4096
+      temperature: 0.8    # matches TTSSamplingParams in modeling_minicpmo.py (was 0.9)
+      top_p: 0.85         # matches TTSSamplingParams in modeling_minicpmo.py (was missing)
+      top_k: 25           # matches TTSSamplingParams in modeling_minicpmo.py (was 50)
+      max_tokens: 1000    # safety valve: ~20s max audio at 50 tok/s (was 4096)
       seed: 42
       detokenize: false
       repetition_penalty: 1.05
       stop_token_ids: [6561]
+      min_tokens: 50      # match upstream MiniCPMTTS.generate() min_new_token=50
 
   - stage_id: 2
     stage_type: llm

@@ -26,9 +26,12 @@ provides stepaudio2.cosyvoice2.* CosyVoice2 implementation.
 
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Iterable
+from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 from vllm.config import VllmConfig
@@ -85,6 +88,7 @@ class MiniCPMOCode2Wav(nn.Module):
         self.__dict__["_flow"] = None
         self.__dict__["_hift"] = None
         self.__dict__["_spk_embed_dim"] = None
+        self.__dict__["_spk_embed"] = None  # Cached speaker embedding (loaded once)
 
     def _get_token2wav_dir(self, model_dir: str) -> str:
         return os.path.join(model_dir, "assets", "token2wav")
@@ -146,6 +150,23 @@ class MiniCPMOCode2Wav(nn.Module):
         hift.float().eval()  # GPU move deferred to first forward() call
         self.__dict__["_hift"] = hift
 
+        # Load speaker embedding once at weight-load time (not on every forward).
+        # Stored via __dict__ to bypass nn.Module parameter tracking.
+        spk_dim = self.__dict__["_spk_embed_dim"]
+        _spk_file = Path(__file__).parent / "female_spk_embedding.npy"
+        try:
+            _spk_np = np.load(str(_spk_file)).astype(np.float32)
+            _spk_embed = torch.from_numpy(_spk_np).unsqueeze(0)
+            if _spk_embed.shape[1] != spk_dim:
+                logger.warning(
+                    "MiniCPMOCode2Wav: female_spk_embedding dim %d != expected %d, using zeros",
+                    _spk_embed.shape[1], spk_dim,
+                )
+                _spk_embed = torch.zeros(1, spk_dim)
+        except Exception:  # FileNotFoundError, IOError, corrupted .npy, etc.
+            _spk_embed = torch.zeros(1, spk_dim)
+        self.__dict__["_spk_embed"] = _spk_embed
+
         logger.info(
             "MiniCPMOCode2Wav: loaded CosyVoice2 flow + HiFi-GAN from %s",
             token2wav_dir,
@@ -205,6 +226,12 @@ class MiniCPMOCode2Wav(nn.Module):
 
         spk_dim = self.__dict__["_spk_embed_dim"]
 
+        # Speaker embedding cached at load_from_directory() time u2014 no disk I/O here.
+        _spk_embed = self.__dict__["_spk_embed"]
+        if _spk_embed is None:
+            # Fallback if load_from_directory was not called (e.g. dummy mode)
+            _spk_embed = torch.zeros(1, spk_dim if spk_dim is not None else 192)
+
         # CosyVoice2 flow.inference() requires batch_size == 1
         results: list[torch.Tensor] = []
         for i in range(codes.shape[0]):
@@ -219,8 +246,7 @@ class MiniCPMOCode2Wav(nn.Module):
             prompt_feat = torch.zeros(1, 0, 80, dtype=dtype, device=device)
             prompt_feat_len = torch.tensor([0], dtype=torch.int32, device=device)
 
-            # Zero speaker embedding — no voice cloning, uses default voice
-            embedding = torch.zeros(1, spk_dim, dtype=dtype, device=device)
+            embedding = _spk_embed.to(dtype=dtype, device=device)
 
             with torch.inference_mode():
                 mel = flow.inference(
@@ -235,10 +261,46 @@ class MiniCPMOCode2Wav(nn.Module):
                 )
                 wav_out = hift(mel.float())  # HiFi-GAN requires float32
                 wav = wav_out[0] if isinstance(wav_out, tuple) else wav_out
+                # _trim_silence contract: requires 2D [1, audio_len].
+                # HiFTGenerator._istft returns [1, audio_len] via torch.istft;
+                # guard against hypothetical 1D vocoder variants.
+                if wav.ndim == 1:
+                    wav = wav.unsqueeze(0)  # [audio_len] -> [1, audio_len]
 
-            results.append(self._trim_silence(wav))
+            # Trim left-context audio: left context tokens are prepended to
+            # help the flow model generate smooth chunk boundaries, but their
+            # corresponding audio was already emitted in the previous chunk.
+            # Keep only the audio fraction corresponding to the NEW tokens
+            # (the tail of the sequence) to avoid 2x duration output.
+            # Use token.shape[1] (per-item length) rather than codes.shape[-1]
+            # (batch max-length) to handle variable-length batches correctly.
+            if left_context_size > 0 and wav.shape[-1] > 0:
+                item_total_tokens = token.shape[1]
+                new_token_count = item_total_tokens - left_context_size
+                if new_token_count <= 0:
+                    # All tokens are left context (already emitted) — no new audio.
+                    wav = wav[..., :0]
+                else:
+                    samples_to_keep = math.ceil(
+                        wav.shape[-1] * new_token_count / item_total_tokens
+                    )
+                    if samples_to_keep > 0:
+                        wav = wav[..., -samples_to_keep:]
+                    else:
+                        # new_token_count rounds to 0 samples — emit nothing.
+                        wav = wav[..., :0]
 
-        return torch.cat(results, dim=0)
+            # _trim_silence returns [1, audio_len] (2D); unsqueeze to
+            # [1, 1, audio_len] (3D) so torch.cat produces [batch, 1, audio_len].
+            results.append(self._trim_silence(wav).unsqueeze(1))
+
+        # Filter out empty tensors before concatenation: if any batch item
+        # produced no new audio (all-context or rounds-to-zero), torch.cat
+        # would fail on mismatched trailing dimensions.
+        non_empty = [r for r in results if r.numel() > 0]
+        if not non_empty:
+            return codes.new_zeros(codes.shape[0], 1, 1, dtype=torch.float32)
+        return torch.cat(non_empty, dim=0)  # [batch, 1, audio_len]
 
     def _trim_silence(self, wav: torch.Tensor, threshold: float = 0.01) -> torch.Tensor:
         """Trim trailing silence/noise from waveform.
@@ -253,7 +315,7 @@ class MiniCPMOCode2Wav(nn.Module):
             wav: [1, audio_len] waveform tensor
             threshold: Energy threshold as fraction of peak energy
         """
-        if wav.numel() == 0 or wav.shape[-1] == 0:
+        if wav.numel() == 0 or wav.ndim < 2 or wav.shape[-1] == 0:
             return wav
         frame_samples = int(0.04 * 16000)  # 40ms at 16kHz
         n_frames = wav.shape[-1] // frame_samples

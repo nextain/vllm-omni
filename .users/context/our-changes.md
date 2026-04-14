@@ -58,9 +58,9 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | `text_prompts_10.txt` | AI 관련 샘플 프롬프트 10개 |
 | `README.md` | qwen3_omni offline 포맷에 맞춘 사용 가이드 |
 
-**SamplingParams 정렬** (8패스 적대적 리뷰 후):
+**SamplingParams 정렬** (8패스 리뷰 + 2026-04-14 버그수정 후):
 - Thinker: `temperature=0.6, top_p=0.95, top_k=20, max_tokens=2048, detokenize=True, repetition_penalty=1.05`
-- Talker: `temperature=0.9, top_k=50, max_tokens=4096, detokenize=False, repetition_penalty=1.05, stop_token_ids=[6561]`
+- Talker: `temperature=0.8, top_p=0.85, top_k=25, max_tokens=1000, min_tokens=50, detokenize=False, repetition_penalty=1.05, stop_token_ids=[6561]` — `modeling_minicpmo.py`의 `TTSSamplingParams` 기준
 - Code2Wav: `temperature=0.0, top_p=1.0, top_k=-1, max_tokens=65536, detokenize=True, repetition_penalty=1.1`
 
 ---
@@ -128,9 +128,12 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 - 종합: 98.0% 평균, 98.7% pass rate
 
 **알려진 한계:**
-- Stop token 6561 미생성 → 오디오 ~20s 고정 → 별도 이슈로 추적, upstream 협력 예정
 - 한국어 TTS: CosyVoice2가 한국어 미지원 → 파인튜닝 필요
 - 스트리밍 TTFP 실측: ~0.07s (Thinker 완료 후 첫 오디오 패킷; baseline sync: 6.5s)
+
+**버그 수정 (2026-04-14):**
+- ~~Stop token 6561 미생성~~ → 근본 원인: Talker 샘플링 파라미터 불일치 (`top_p=1.0` 누락, `top_k=50`, `temp=0.9`). `TTSSamplingParams` 기준값으로 수정
+- ~~left_context_size 무시~~ → 50토큰 전체 처리 후 2배 오디오 출력. 비례 trimming으로 수정 (`math.ceil(wav_len * new_token_count / total)`)
 
 **OmniSpeaker 클라이언트 버그 (수정 완료):**
 - `getattr(chunk, "modality", "text")` 기본값으로 오디오 청크가 항상 텍스트 경로로 처리됨

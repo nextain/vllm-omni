@@ -295,6 +295,126 @@ class TestMiniCPMOCode2WavInstantiation:
 
 
 # ---------------------------------------------------------------------------
+# MiniCPMOCode2Wav.forward() left_context_size trimming
+# ---------------------------------------------------------------------------
+
+
+class TestMiniCPMOCode2WavForwardTrimming:
+    """Verify left_context_size proportional trimming in forward().
+
+    Uses mocked flow / HiFi-GAN so no real model weights are needed.
+    The mock produces audio proportional to input token count, making
+    the ratio assertions deterministic.
+    """
+
+    # 480 fake samples per token (arbitrary; keeps output size reasonable)
+    SAMPLES_PER_TOKEN = 480
+
+    @pytest.fixture
+    def c2w(self):
+        """Code2Wav with mocked flow and HiFi-GAN."""
+        from unittest.mock import MagicMock
+
+        from vllm_omni.model_executor.models.minicpm_o.minicpm_o_code2wav import (
+            MiniCPMOCode2Wav,
+        )
+
+        spt = self.SAMPLES_PER_TOKEN
+
+        def fake_flow_inference(
+            token, token_len, prompt_token, prompt_token_len,
+            prompt_feat, prompt_feat_len, embedding, n_timesteps,
+        ):
+            """Return fake mel proportional to sequence length."""
+            seq_len = token.shape[1]
+            # mel shape expected by HiFT: [1, 80, T]
+            return torch.zeros(1, 80, seq_len * 10)
+
+        def fake_hift(mel):
+            """Return (wav, source) with wav length proportional to mel time dim."""
+            n_samples = mel.shape[2] * (spt // 10)
+            wav = torch.rand(1, n_samples)  # non-zero so _trim_silence passes
+            source = torch.zeros(1, 1, 0)
+            return wav, source
+
+        mock_flow = MagicMock()
+        mock_flow.parameters = lambda: iter([])  # triggers CPU/float32 defaults
+        mock_flow.buffers = lambda: iter([])
+        mock_flow.inference = MagicMock(side_effect=fake_flow_inference)
+
+        mock_hift = MagicMock(side_effect=fake_hift)
+
+        model = MiniCPMOCode2Wav(vllm_config=None)
+        model.__dict__["_flow"] = mock_flow
+        model.__dict__["_hift"] = mock_hift
+        model.__dict__["_spk_embed"] = torch.zeros(1, 192)
+        model.__dict__["_spk_embed_dim"] = 192
+        return model
+
+    # --- baseline ---
+
+    def test_no_left_context_returns_full_audio(self, c2w):
+        """left_context_size=0 → entire generated audio is returned."""
+        codes = torch.randint(0, 6560, (1, 25))
+        result = c2w.forward(codes, left_context_size=0)
+        assert result.shape[0] == 1
+        assert result.shape[-1] > 0
+
+    # --- proportional trimming ---
+
+    def test_left_context_halves_audio_duration(self, c2w):
+        """25 new + 25 left context → output ≈50 % of 50-token audio."""
+        codes_50 = torch.randint(0, 6560, (1, 50))
+        full_len = c2w.forward(codes_50, left_context_size=0).shape[-1]
+        trimmed_len = c2w.forward(codes_50, left_context_size=25).shape[-1]
+
+        ratio = trimmed_len / full_len
+        assert 0.45 <= ratio <= 0.55, (
+            f"Expected ~50 % trim, got {ratio:.3f} "
+            f"(trimmed={trimmed_len}, full={full_len})"
+        )
+
+    def test_left_context_trims_tail_matches_new_only(self, c2w):
+        """Audio from (50 tokens, left=25) must be similar to (25 tokens, left=0)."""
+        # Both represent 25 *new* tokens worth of audio.
+        # Because fake_hift output length is deterministic and proportional,
+        # their lengths should match within 1 sample (rounding).
+        codes_50 = torch.randint(0, 6560, (1, 50))
+        codes_25 = torch.randint(0, 6560, (1, 25))
+
+        trimmed_len = c2w.forward(codes_50, left_context_size=25).shape[-1]
+        baseline_len = c2w.forward(codes_25, left_context_size=0).shape[-1]
+
+        assert abs(trimmed_len - baseline_len) <= 1, (
+            f"Trimmed audio length {trimmed_len} should ≈ baseline {baseline_len}"
+        )
+
+    # --- edge cases ---
+
+    def test_all_tokens_are_left_context_returns_fallback(self, c2w):
+        """left_context_size == total_tokens → new_token_count=0 → fallback zeros."""
+        codes = torch.randint(0, 6560, (1, 25))
+        result = c2w.forward(codes, left_context_size=25)
+        # non_empty filter fires → fallback is returned, not empty crash
+        assert result.numel() > 0
+        assert result.shape[0] == 1
+
+    def test_left_context_exceeds_total_returns_fallback(self, c2w):
+        """left_context_size > total_tokens (over-context) → fallback zeros."""
+        codes = torch.randint(0, 6560, (1, 10))
+        result = c2w.forward(codes, left_context_size=25)
+        assert result.numel() > 0
+        assert result.shape[0] == 1
+
+    def test_empty_codes_returns_fallback(self, c2w):
+        """Empty codec sequence → early-exit fallback."""
+        codes = torch.zeros(1, 0, dtype=torch.long)
+        result = c2w.forward(codes)
+        assert result.shape[0] == 1
+        assert result.numel() > 0
+
+
+# ---------------------------------------------------------------------------
 # Thinker forward returns (hidden_states, inputs_embeds) tuple
 # ---------------------------------------------------------------------------
 
