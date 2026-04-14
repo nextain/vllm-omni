@@ -1609,6 +1609,10 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 if output_text:
                     # Get the corresponding output token IDs
                     output_token_ids = None
+                    # NOTE: final_res is always None here (never assigned in this
+                    # scope; see comment above). When refactored, note also that
+                    # choice.index is a sequential position (0=text, 1=audio, ...) and
+                    # does NOT index into final_res.outputs 1:1 for multi-modal responses.
                     if final_res is not None and choice.index < len(final_res.outputs):
                         output_token_ids = final_res.outputs[choice.index].token_ids
 

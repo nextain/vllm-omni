@@ -9,6 +9,7 @@ import torch
 from vllm.inputs import TextPrompt
 from vllm.platforms import current_platform
 
+from vllm_omni.engine import OmniEngineCoreRequest
 from vllm_omni.inputs.data import OmniTokensPrompt
 
 
@@ -91,7 +92,7 @@ def _find_tts_bound(
 def thinker2talker_async_chunk(
     transfer_manager: Any,
     pooling_output: dict[str, Any],
-    request: Any,
+    request: OmniEngineCoreRequest,
     is_finished: bool = False,
 ) -> dict[str, Any] | None:
     """Async chunk: accumulate Thinker hidden states until generation is done.
@@ -180,8 +181,11 @@ def thinker2talker_async_chunk(
 
     hidden_len = thinker_hidden_states.shape[0]
     if tts_start >= hidden_len:
-        tts_start = 0
-        tts_end = None
+        # tts boundary is beyond available hidden states — produce an empty
+        # slice so that num_tts_tokens == 0 fallback fires gracefully.
+        # (resetting to 0 would feed the entire unfiltered sequence to Talker)
+        tts_start = hidden_len
+        tts_end = hidden_len
     if tts_end is not None and tts_end > hidden_len:
         tts_end = hidden_len
 
@@ -225,7 +229,7 @@ def thinker2talker_async_chunk(
 def thinker2talker(
     stage_list: list[Any],
     engine_input_source: list[int],
-    prompt: "OmniTokensPrompt | TextPrompt | None" = None,
+    prompt: OmniTokensPrompt | TextPrompt | None = None,
     requires_multimodal_data: bool = False,
 ) -> list[OmniTokensPrompt]:
     """Build talker inputs from thinker outputs.
@@ -284,8 +288,11 @@ def thinker2talker(
 
         # Clamp tts_start/tts_end to hidden_states bounds
         if tts_start >= hidden_len:
-            tts_start = 0
-            tts_end = None
+            # tts boundary beyond available states u2014 produce empty slice so
+            # num_tts_tokens == 0 fallback fires gracefully.
+            # (resetting to 0 would feed the entire unfiltered sequence to Talker)
+            tts_start = hidden_len
+            tts_end = hidden_len
         if tts_end is not None and tts_end > hidden_len:
             tts_end = hidden_len
 
@@ -354,7 +361,7 @@ def thinker2talker(
 def talker2code2wav(
     stage_list: list[Any],
     engine_input_source: list[int],
-    prompt: "OmniTokensPrompt | TextPrompt | None" = None,
+    prompt: OmniTokensPrompt | TextPrompt | None = None,
     requires_multimodal_data: bool = False,
 ) -> list[OmniTokensPrompt]:
     """Build code2wav inputs from talker codec-token outputs.
@@ -394,7 +401,7 @@ def talker2code2wav(
 def talker2code2wav_async_chunk(
     transfer_manager: Any,
     pooling_output: dict[str, Any] | None,
-    request: Any,
+    request: OmniEngineCoreRequest,
     is_finished: bool = False,
 ) -> dict[str, Any] | None:
     """Async chunk: stream codec tokens to Code2Wav as they're generated.
