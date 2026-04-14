@@ -198,6 +198,7 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 | offline_inference/minicpm_o/end2end.py | ✅ | 8패스 적대적 리뷰; SamplingParams 정렬 완료 |
 | offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8패스 리뷰; init_timeout, use_image_audio 추가 |
 | offline_inference/minicpm_o/run_*.sh | ✅ | 파일 존재 검사, PROMPTS_FILE 변수 재사용 |
+| entrypoints/openai/serving_chat.py | ✅ | 2026-04-14: 중복 index=0 수정(sequential renumber) + final_res None guard. upstream 코드 — 최소 변경, cross-review + E2E 검증 |
 
 ---
 
@@ -215,4 +216,7 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 
 ## 추가 교훈 (2026-04-14)
 
-9. **serving_chat.py 중복 index=0** u2014 omni 모델 텍스트+오디오 동시 출력 시 OpenAI 스펙 위반. post-loop enumerate로 수정.
+9. **serving_chat.py 중복 index=0** — omni 모델 텍스트+오디오 동시 출력 시 OpenAI 스펙 위반. post-loop enumerate로 수정.
+10. **Talker sampling params 맞춰야 함** — top_p, top_k, temperature 멀슰 시 stop token 6561 생성 안 됨 → 323초 gibberish.
+11. **final_res는 항상 None** — serving_chat.py 스코프에서 할당 안 됨. 로그 경로 None guard 필수.
+12. **two-choice design은 OpenAI spec 위반** — n>1 시 choices 개수 != n. sequential renumber는 workaround; 근본은 upstream 설계 변경 필요.

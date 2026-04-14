@@ -214,6 +214,7 @@ Input (text + image/audio)
 | offline_inference/minicpm_o/run_*.sh | ✅ | File existence checks, PROMPTS_FILE variable reuse |
 | serving_omni_duplex.py | ✅ | 3-pass adversarial review (3 CRITICALs fixed); /v1/omni full-duplex |
 | api_server.py (/v1/omni route) | ✅ | Additive only; null guard for chat service |
+| entrypoints/openai/serving_chat.py | ✅ | 2026-04-14: duplicate index=0 fix (sequential renumber) + final_res None guard. upstream code — minimal change, cross-review + E2E verified |
 
 ---
 
@@ -229,3 +230,5 @@ Input (text + image/audio)
 8. **max_inflight: 1** — prevents OOM from concurrent stage memory (vllm-omni#1387)
 9. **Talker sampling must match TTSSamplingParams** — reference model (`modeling_minicpmo.py`) hardcodes `top_k=25, top_p=0.85, temperature=0.8, min_new_token=50`. Deviating (especially `top_p=1.0`) means stop token 6561 is rarely generated → 4096-token audio → 323s gibberish
 10. **left_context_size trimming** — Code2Wav `forward()` receives (new + left_context) tokens; must emit only new-token audio. Use `math.ceil(wav_len * new_token_count / total)` and slice from tail (`wav[..., -samples_to_keep:]`). Left context = front of chunk = already emitted in previous chunk.
+11. **final_res is always None in serving_chat.py** — `final_res` initialized to None at ~line 1508 in `chat_completion_full_generator()` and never assigned in that scope (assignments are in helper methods). Any `final_res.outputs[...]` access without guard would AttributeError. Added None guard before log path. Root cause: upstream refactoring left dead code. Upstream PR candidate.
+12. **serving_chat.py two-choice design is OpenAI spec violation** — vllm-omni returns text and audio as separate choice objects (both index=0 for n=1). OpenAI spec expects ONE choice with both `message.content` and `message.audio`. All existing clients use field presence parsing so no breakage, but n>1 produces `len(choices) != n`. Sequential renumber is a safe workaround; root fix requires upstream design change. Upstream issue filed.
