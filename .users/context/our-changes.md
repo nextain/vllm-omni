@@ -211,3 +211,8 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 6. **NCCL_P2P_DISABLE=1** — NVLink 없는 RTX 3090 필수
 7. **Code2Wav GPU 메모리** — CosyVoice2 flow 모델 ~15 GB; 할당 계획 필수
 8. **max_inflight: 1** — 동시 스테이지 메모리 OOM 방지 (vllm-omni#1387)
+
+
+## 추가 교훈 (2026-04-14)
+
+9. **serving_chat.py 중복 index=0** u2014 omni 모델 텍스트+오디오 동시 출력 시 OpenAI 스펙 위반. post-loop enumerate로 수정.

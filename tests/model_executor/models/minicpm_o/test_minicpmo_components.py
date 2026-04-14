@@ -307,8 +307,12 @@ class TestMiniCPMOCode2WavForwardTrimming:
     the ratio assertions deterministic.
     """
 
-    # 480 fake samples per token (arbitrary; keeps output size reasonable)
+    # 480 fake samples per token (arbitrary; keeps output size reasonable).
+    # MUST be divisible by 10: fake_hift uses `mel.shape[2] * (SAMPLES_PER_TOKEN // 10)`
+    # and fake_flow_inference uses `seq_len * 10`. Integer truncation in `// 10` would
+    # break the exact proportionality assumption in test_left_context_trims_tail_matches_new_only.
     SAMPLES_PER_TOKEN = 480
+    assert SAMPLES_PER_TOKEN % 10 == 0, "SAMPLES_PER_TOKEN must be divisible by 10 (see comment above)"
 
     @pytest.fixture
     def c2w(self):
@@ -349,6 +353,13 @@ class TestMiniCPMOCode2WavForwardTrimming:
         model.__dict__["_hift"] = mock_hift
         model.__dict__["_spk_embed"] = torch.zeros(1, 192)
         model.__dict__["_spk_embed_dim"] = 192
+        # Seed for reproducibility: each test method consumes RNG state via
+        # torch.randint before forward() is called, so the seed here does not
+        # guarantee fully deterministic outputs. The proportional-length
+        # assertions are structurally correct regardless of random values
+        # (because _trim_silence never trims uniform [0,1] noise).
+        # The seed provides a stable baseline for future value-sensitive tests.
+        torch.manual_seed(42)
         return model
 
     # --- baseline ---
@@ -365,6 +376,9 @@ class TestMiniCPMOCode2WavForwardTrimming:
     def test_left_context_halves_audio_duration(self, c2w):
         """25 new + 25 left context → output ≈50 % of 50-token audio."""
         codes_50 = torch.randint(0, 6560, (1, 50))
+        # The ratio comes from new_token_count / total (25/50 = 0.5), not from RNG.
+        # fake_hift uses torch.rand() so outputs are non-zero; _trim_silence never
+        # trims uniform [0,1] noise. The 45-55% window is a rounding guard only.
         full_len = c2w.forward(codes_50, left_context_size=0).shape[-1]
         trimmed_len = c2w.forward(codes_50, left_context_size=25).shape[-1]
 
@@ -377,8 +391,18 @@ class TestMiniCPMOCode2WavForwardTrimming:
     def test_left_context_trims_tail_matches_new_only(self, c2w):
         """Audio from (50 tokens, left=25) must be similar to (25 tokens, left=0)."""
         # Both represent 25 *new* tokens worth of audio.
-        # Because fake_hift output length is deterministic and proportional,
-        # their lengths should match within 1 sample (rounding).
+        # codes_50 and codes_25 contain DIFFERENT token values (separate randint calls),
+        # but the assertion is valid because fake_flow_inference uses only token.shape[1]
+        # (the count), never the token values themselves. Any 50-token input produces
+        # identical output shape, and any 25-token input produces identical output shape.
+        # If this mock is ever replaced with a value-sensitive one, revisit this test.
+        #
+        # The ±1 tolerance covers math.ceil rounding in the production trimming:
+        #   math.ceil(wav_len * new_token_count / total)
+        # With SAMPLES_PER_TOKEN=480 (divisible by 10), the mock arithmetic is
+        # exactly proportional so both sides produce 25*480=12000 samples, making
+        # the diff 0. The ±1 guard is defensive for any future rounding edge case.
+        # INVARIANT: SAMPLES_PER_TOKEN % 10 == 0 must hold (enforced by class-level assert).
         codes_50 = torch.randint(0, 6560, (1, 50))
         codes_25 = torch.randint(0, 6560, (1, 25))
 
@@ -392,26 +416,38 @@ class TestMiniCPMOCode2WavForwardTrimming:
     # --- edge cases ---
 
     def test_all_tokens_are_left_context_returns_fallback(self, c2w):
-        """left_context_size == total_tokens → new_token_count=0 → fallback zeros."""
+        """left_context_size == total_tokens → new_token_count=0 → zeros sentinel.
+
+        The `new_token_count <= 0` guard sets wav to empty `[..., :0]`.
+        The non_empty filter then catches the empty result and returns zeros.
+        forward() must return the zeros sentinel (shape [1,1,1], all zero).
+        """
         codes = torch.randint(0, 6560, (1, 25))
         result = c2w.forward(codes, left_context_size=25)
-        # non_empty filter fires → fallback is returned, not empty crash
-        assert result.numel() > 0
-        assert result.shape[0] == 1
+        # Zeros sentinel: shape [batch, 1, 1], all-zero values.
+        assert result.shape == (1, 1, 1), f"Expected zeros-sentinel shape (1,1,1), got {result.shape}"
+        assert result.sum().item() == 0, "Zeros sentinel should be all-zero"
 
     def test_left_context_exceeds_total_returns_fallback(self, c2w):
-        """left_context_size > total_tokens (over-context) → fallback zeros."""
+        """left_context_size > total_tokens (over-context) → zeros fallback.
+
+        The guard `new_token_count <= 0` fires and empties the wav.
+        forward() must return the zeros sentinel (shape [1,1,1], all zero).
+        """
         codes = torch.randint(0, 6560, (1, 10))
         result = c2w.forward(codes, left_context_size=25)
-        assert result.numel() > 0
-        assert result.shape[0] == 1
+        assert result.shape == (1, 1, 1), f"Expected zeros-sentinel shape (1,1,1), got {result.shape}"
+        assert result.sum().item() == 0, "Zeros sentinel should be all-zero"
 
     def test_empty_codes_returns_fallback(self, c2w):
-        """Empty codec sequence → early-exit fallback."""
+        """Empty codec sequence → early-exit fallback (zeros sentinel)."""
         codes = torch.zeros(1, 0, dtype=torch.long)
+        # left_context_size defaults to 0 in forward(); empty sequence triggers early-exit
+        # before any left_context trimming logic is reached.
         result = c2w.forward(codes)
-        assert result.shape[0] == 1
-        assert result.numel() > 0
+        # Early-exit returns codes.new_zeros(codes.shape[0], 1, 1)
+        assert result.shape == (1, 1, 1), f"Expected zeros-sentinel shape (1,1,1), got {result.shape}"
+        assert result.sum().item() == 0, "Zeros sentinel should be all-zero"
 
 
 # ---------------------------------------------------------------------------
@@ -424,7 +460,7 @@ class TestThinkerForwardTuple:
 
     @pytest.fixture
     def thinker(self):
-        from unittest.mock import MagicMock, patch
+        from unittest.mock import MagicMock
         import torch.nn as nn
 
         from vllm_omni.model_executor.models.minicpm_o.minicpm_o_thinker import (

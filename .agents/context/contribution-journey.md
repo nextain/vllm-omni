@@ -185,6 +185,37 @@ internal history but are superseded by `BENCHMARK.md` / `BENCHMARK.ko.md`.
 
 ---
 
+
+### Phase 11: serving_chat.py duplicate index=0 fix (2026-04-14)
+
+**Symptom**: `/v1/chat/completions` non-streaming response contains two choices both with `index=0`:
+- `{index:0, message:{content:"text"}}` (text modality)
+- `{index:0, message:{audio:{...}}}` (audio modality)
+
+**Root cause**: `chat_completion_full_generator` loops over `OmniRequestOutput` items (one per
+pipeline stage). Each calls `_create_text_choice` / `_create_audio_choice` which uses `output.index`
+from `RequestOutput.outputs`. For n=1 requests, `output.index=0` for all modalities u2192 duplicates.
+
+**Standard**: OpenAI Chat Completions spec requires unique sequential `index` per choice.
+
+**Fix**: Post-loop sequential renumber u2014 one line after `choices.extend()`:
+```python
+for i, choice in enumerate(choices):
+    choice.index = i
+```
+
+**Safety**: All demo clients (qwen3_omni, mimo_audio, minicpm_o) parse by field presence
+(`choice.message.audio`, `choice.message.content`), not by `choice.index` value. No breakage.
+
+**Bonus fix**: `final_res` is always `None` in this function scope u2014 output-logging token IDs
+were silently always None. Added `final_res is not None` guard + explanatory comment.
+
+**Recommended upstream**: Same bug affects all omni models. Upstream PR warranted.
+
+**Review**: 2 consecutive clean passes achieved.
+
+---
+
 ## Files to Review When Resuming
 
 ```

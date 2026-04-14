@@ -1568,6 +1568,13 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 response_metrics = omni_outputs.metrics
             choices.extend(choices_data)
 
+        # Renumber choices sequentially: omni modalities each use output.index=0
+        # (for n=1 requests), producing duplicate indexes when text + audio (or
+        # image) choices are combined. Index here identifies position in the
+        # choices list, not the n-completions fan-out index.
+        for i, choice in enumerate(choices):
+            choice.index = i
+
         response = OmniChatCompletionResponse(
             id=request_id,
             created=created_time,
@@ -1580,7 +1587,11 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
             metrics=response_metrics,
         )
 
-        # Log complete response if output logging is enabled
+        # Log complete response if output logging is enabled.
+        # NOTE: final_res is initialized to None above and never assigned in this
+        # function's scope (assignments are in helper methods _create_text_choice
+        # etc.). output_token_ids will therefore always be None until this logging
+        # path is refactored to thread final_res back from the helper.
         if self.enable_log_outputs and self.request_logger:
             for choice in choices:
                 output_text = ""
@@ -1598,7 +1609,7 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
                 if output_text:
                     # Get the corresponding output token IDs
                     output_token_ids = None
-                    if choice.index < len(final_res.outputs):
+                    if final_res is not None and choice.index < len(final_res.outputs):
                         output_token_ids = final_res.outputs[choice.index].token_ids
 
                     self.request_logger.log_outputs(
