@@ -48,7 +48,7 @@ class AudioMixin:
         audio_tensor, sample_rate = self._apply_speed_adjustment(audio_tensor, speed, sample_rate)
 
         supported_formats = {
-            "wav": ("WAV", "audio/wav", {}),
+            "wav": ("WAV", "audio/wav", {"subtype": "PCM_16"}),  # PCM_16 for client compatibility (float32 WAV causes double-length playback)
             "pcm": ("RAW", "audio/pcm", {"subtype": "PCM_16"}),
             "flac": ("FLAC", "audio/flac", {}),
             "mp3": ("MP3", "audio/mpeg", {}),

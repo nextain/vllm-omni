@@ -20,6 +20,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncGenerator, Iterable
 from functools import cached_property
+from typing import Any
 
 import numpy as np
 import torch
@@ -39,6 +40,8 @@ from vllm.multimodal import MULTIMODAL_REGISTRY
 from vllm.sequence import IntermediateTensors
 from vllm.tokenizers import cached_tokenizer_from_config
 from vllm.transformers_utils.processor import cached_processor_from_config
+from vllm.v1.outputs import SamplerOutput
+from vllm.v1.sample.metadata import SamplingMetadata
 from vllm.v1.sample.sampler import Sampler
 
 from vllm_omni.model_executor.custom_process_mixin import CustomProcessMixin
@@ -178,10 +181,13 @@ class MiniCPMOForConditionalGeneration(
             )
 
         # Intermediate tensor factory (used by vllm PP pipeline)
+        # Non-thinker stages do not use PP, but the factory must still be
+        # callable with the standard vllm signature and return a valid
+        # IntermediateTensors (not None) to satisfy the PP infrastructure.
         self.make_empty_intermediate_tensors = (
             self.thinker.make_empty_intermediate_tensors
             if self.model_stage == "thinker"
-            else lambda: None
+            else lambda *args, **kwargs: IntermediateTensors({})
         )
 
     # ==================== Device utility ====================
@@ -275,8 +281,10 @@ class MiniCPMOForConditionalGeneration(
         is_multimodal=None,
     ) -> torch.Tensor:
         if self.model_stage == "code2wav":
-            # Code2Wav: no token embeddings; return a zero dummy tensor.
-            return torch.zeros_like(input_ids).reshape(-1, 1).repeat(
+            # Code2Wav: no token embeddings; return a zero dummy float32 tensor.
+            # Explicit dtype=float32 matches qwen3_tts_code2wav pattern and avoids
+            # relying on PyTorch's implicit longu2192float cast in the embedding copy path.
+            return torch.zeros_like(input_ids, dtype=torch.float32).reshape(-1, 1).repeat(
                 1, self.vllm_config.model_config.get_hidden_size()
             )
         # Thinker and Talker: delegate to the active model's embed_input_ids.
@@ -307,6 +315,7 @@ class MiniCPMOForConditionalGeneration(
         positions: torch.Tensor,
         intermediate_tensors: IntermediateTensors | None = None,
         inputs_embeds: torch.Tensor | None = None,
+        runtime_additional_information: list[dict[str, Any]] | None = None,
         **kwargs: object,
     ) -> torch.Tensor | IntermediateTensors | list[torch.Tensor]:
         """Unified forward for all three model stages."""
@@ -333,9 +342,14 @@ class MiniCPMOForConditionalGeneration(
             talker_hidden = self.config.tts_config.hidden_size
             if (
                 inputs_embeds is None
-                or input_ids is None
+                or inputs_embeds.ndim < 2
                 or inputs_embeds.shape[-1] != talker_hidden
             ):
+                if input_ids is None:
+                    raise ValueError(
+                        "MiniCPMO Talker forward: both input_ids and inputs_embeds are None"
+                        " (or inputs_embeds has wrong shape). Cannot build codec embeddings."
+                    )
                 inputs_embeds = self.talker.embed_input_ids(input_ids)
 
             return self.talker(
@@ -351,7 +365,22 @@ class MiniCPMOForConditionalGeneration(
             if codes.ndim == 1:
                 codes = codes.unsqueeze(0)
 
-            return self.code2wav.decode(codes)
+            # Extract left_context_size from the async_chunk runtime payload.
+            # The framework passes runtime_additional_information as list[dict]
+            # (one entry per request in batch order).  Code2Wav always runs
+            # single-request (max_num_seqs=1 in stage config), so index [0] is safe.
+            if runtime_additional_information is not None and len(runtime_additional_information) > 1:
+                raise ValueError(
+                    f"Code2Wav expects single-request batches — set max_num_seqs=1 in stage "
+                    f"config (stage_configs/minicpmo*.yaml), got "
+                    f"{len(runtime_additional_information)} concurrent requests"
+                )
+            left_context_size: int = 0
+            if runtime_additional_information:
+                info = runtime_additional_information[0]
+                left_context_size = info.get("left_context_size", 0)
+            wavs = self.code2wav(codes, left_context_size=left_context_size)
+            return list(wavs.unbind(dim=0))
 
         # Unreachable (ValueError raised in __init__)
         raise AssertionError(f"Unexpected model_stage: {self.model_stage!r}")
@@ -370,6 +399,11 @@ class MiniCPMOForConditionalGeneration(
         if self.model_stage == "thinker":
             # Thinker forward returns (hidden_states, inputs_embeds) tuple.
             # thinker_hidden_states is used by talker for semantic_projection.
+            if not (isinstance(model_outputs, (tuple, list)) and len(model_outputs) == 2):
+                raise RuntimeError(
+                    f"MiniCPMO thinker forward must return a 2-tuple "
+                    f"(hidden_states, inputs_embeds), got {type(model_outputs)}"
+                )
             hidden, text_embeds = model_outputs
 
             # Pipeline-parallel non-final rank: language_model returns
@@ -462,7 +496,8 @@ class MiniCPMOForConditionalGeneration(
             if thinker_hidden_states is not None and thinker_token_ids is not None:
                 t_ids = thinker_token_ids.to(device=device, dtype=torch.long)
                 # Serialization cast hidden to float32; restore model dtype
-                model_dtype = next(self.talker.parameters()).dtype
+                _p = next(self.talker.parameters(), None)
+                model_dtype = _p.dtype if _p is not None else torch.float32
                 t_hid = thinker_hidden_states.to(device=device, dtype=model_dtype)
 
                 # Build conditioning: emb_text(tokens) + normalize(semantic_projection(hidden))
@@ -483,6 +518,13 @@ class MiniCPMOForConditionalGeneration(
                 start_pos: int = info_dict.get("num_processed_tokens", 0)  # type: ignore[assignment]
                 end_pos = start_pos + span_len
                 input_embeds = full_conditioning[start_pos:end_pos]
+
+                # Guard: if start_pos has already passed all conditioning (can
+                # happen when conditioning length < span_len in deep chunked-prefill
+                # chains), fall back to codec embeddings to avoid passing a
+                # zero-length inputs_embeds to the Llama backbone.
+                if input_embeds.shape[0] == 0:
+                    input_embeds = self.talker.embed_input_ids(input_ids.to(device))
 
                 # Store remaining positions as trailing queue for decode steps
                 if full_conditioning.shape[0] > end_pos:
@@ -546,9 +588,14 @@ class MiniCPMOForConditionalGeneration(
             hidden_states = hidden_states.text_hidden_states
 
         if self.model_stage == "thinker":
+            # Upstream pattern (qwen3_omni.py:1199): inner model.compute_logits
+            # takes only hidden_states; sampling is handled by sample() later.
             return self.thinker.language_model.compute_logits(hidden_states)
 
         if self.model_stage == "talker":
+            # MiniCPMOTalkerForConditionalGeneration.compute_logits accepts only
+            # hidden_states (codec vocab projection u2014 no temperature/top-p sampling).
+            # sampling_metadata is intentionally not forwarded here.
             return self.talker.compute_logits(hidden_states)
 
         # code2wav has no logits
@@ -557,8 +604,8 @@ class MiniCPMOForConditionalGeneration(
     def sample(
         self,
         logits: torch.Tensor,
-        sampling_metadata: object,
-    ):
+        sampling_metadata: SamplingMetadata,
+    ) -> SamplerOutput | None:
         """Sample next tokens from logits."""
         return self.sampler(logits, sampling_metadata)
 

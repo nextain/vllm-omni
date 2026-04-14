@@ -343,16 +343,19 @@ class MiniCPMOCode2Wav(nn.Module):
         trim_sample = min((speech_end_frame + 2) * frame_samples, wav.shape[-1])
         return wav[:, :trim_sample]
 
-    def decode(self, codes: torch.Tensor) -> list[torch.Tensor]:
+    def decode(self, codes: torch.Tensor, left_context_size: int = 0) -> list[torch.Tensor]:
         """Decode codec token sequences to waveforms.
 
         Args:
             codes: [batch, seq_len] — audio token IDs from Talker
+            left_context_size: Number of leading codec tokens that are
+                left-context (already emitted in a previous chunk).
+                Must be 0 for offline/non-streaming use.
 
         Returns:
             list[torch.Tensor]: One waveform [1, audio_len] per batch element
         """
-        wav_batch = self.forward(codes)  # [batch, 1, audio_len]
+        wav_batch = self.forward(codes, left_context_size=left_context_size)  # [batch, 1, audio_len]
         return list(wav_batch.unbind(dim=0))
 
     def load_weights(self, weights: Iterable[tuple[str, torch.Tensor]]) -> set[str]:

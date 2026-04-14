@@ -27,6 +27,7 @@ echo "Ctrl+C to stop"
 echo ""
 
 export NCCL_P2P_DISABLE=1
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 "$VENV/bin/vllm" serve "$MODEL" --omni \
     --stage-configs-path "$STAGE_CONFIG" \
     --trust-remote-code \

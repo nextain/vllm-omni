@@ -61,6 +61,11 @@ dev = [
     "scikit-learn>=1.4.0", # for minicpm_o cosine similarity computation (optional)
 ]
 
+minicpm_o = [
+    "minicpmo-utils",  # Code2Wav stage: CosyVoice2 + HiFi-GAN (stepaudio2)
+    "hyperpyyaml",    # Code2Wav stage: flow.yaml loading
+]
+
 demo = [
     "gradio>=6.7.0",
 ]
@@ -99,6 +104,7 @@ include = ["vllm_omni*"]
 [tool.setuptools.package-data]
 "vllm_omni" = ["_version.py", "py.typed"]
 "vllm_omni.model_executor.stage_configs" = ["*.yaml"]
+"vllm_omni.model_executor.models.minicpm_o" = ["*.npy"]  # female_spk_embedding.npy
 
 [tool.setuptools_scm]
 # no extra settings needed, presence enables setuptools-scm
@@ -140,7 +146,7 @@ ignore = [
 "tests/**" = ["E501"]  # Allow long lines in tests
 
 [tool.mypy]
-python_version = "3.12, 3.13"
+python_version = "3.12"
 warn_return_any = true
 warn_unused_configs = true
 disallow_untyped_defs = true

@@ -1876,6 +1876,8 @@ class OmniOpenAIServingChat(OpenAIServingChat, AudioMixin):
         # Reference: examples/offline_inference/qwen3_omni/end2end.py line 421
         audio_data = final_res.outputs[0].multimodal_output.get("audio")
         if isinstance(audio_data, list):
+            if not audio_data:
+                return []
             if stream:
                 audio_tensor = audio_data[-1]
             else:

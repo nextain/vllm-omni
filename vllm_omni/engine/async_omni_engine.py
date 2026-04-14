@@ -366,9 +366,15 @@ class AsyncOmniEngine:
                     else:
                         current_omni_platform.set_device_control_env_var(previous_visible_devices)
 
-            logger.info("[AsyncOmniEngine] Stage %s engine launch started", metadata.stage_id)
-            complete_stage_handshake(proc, handshake_address, addresses, vllm_config)
-            logger.info("[AsyncOmniEngine] Stage %s engine startup completed", metadata.stage_id)
+                # Perform handshake inside the lock so the next stage does not
+                # call get_open_port() until this stage's WorkerProc has already
+                # bound its TCPStore port.  Without this, concurrent stage
+                # launches race on get_open_port() and both pick the same port
+                # (EADDRINUSE on the second caller).
+                logger.info("[AsyncOmniEngine] Stage %s engine launch started", metadata.stage_id)
+                complete_stage_handshake(proc, handshake_address, addresses, vllm_config)
+                logger.info("[AsyncOmniEngine] Stage %s engine startup completed", metadata.stage_id)
+
             assert started_stage is not None
             return started_stage
         except Exception:

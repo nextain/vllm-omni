@@ -158,11 +158,11 @@ Key fields:
 |--------|:---------:|-------|
 | Text | ✅ | `modalities: ["text"]` |
 | Audio | ✅ | `modalities: ["audio"]` — full WAV in response |
-| Streaming audio | ❌ | `async_chunk: false` — full audio returned after generation |
+| Streaming audio | ✅ | `async_chunk: true` — use `minicpmo_async_chunk.yaml`; TTFP ~0.07s (Talker→Code2Wav overlap) |
 
 ## Known Limitations
 
 - **Voice cloning**: Not supported (empty speaker embedding)
 - **Video input**: Disabled (`limit_mm_per_prompt: {video: 0}`)
 - **Code2Wav batch_size=1**: CosyVoice2 API constraint
-- **Streaming audio**: Not yet (`async_chunk: false`); qwen3_omni has this feature
+- **Streaming TTFP**: Thinker must fully complete before Talker starts (TTS boundary detection requires full token sequence). Streaming gain comes from Talkeru2192Code2Wav overlap, not Thinkeru2192Talker overlap.

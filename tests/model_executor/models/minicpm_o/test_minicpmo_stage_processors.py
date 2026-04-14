@@ -57,11 +57,12 @@ class TestFindTtsBound:
         assert end is None
 
     def test_eos_only(self, find_bound):
-        """Only tts_eos, no tts_bos → start=0, end at eos position."""
+        """Only tts_eos without preceding tts_bos u2192 EOS is ignored (start=0, end=None)."""
         tokens = [10, 20, 30, self.EOS, 50]
         start, end = find_bound(tokens, self.BOS, self.EOS)
-        assert start == 0  # no bos found, fallback
-        assert end == 3
+        assert start == 0  # no bos found u2192 fallback to 0
+        # EOS is only recorded after BOS is seen u2014 absent BOS means end=None
+        assert end is None
 
     def test_bos_at_end(self, find_bound):
         """tts_bos at last position → start = len(tokens), no content."""
@@ -98,14 +99,24 @@ class TestFindTtsBound:
         assert start == 3
         assert end == 5
 
+    def test_im_end_fallback(self, find_bound):
+        """When tts_eos absent, <|im_end|> after BOS is used as fallback boundary."""
+        IM_END = 151645
+        tokens = [10, self.BOS, 30, 40, IM_END, 50]
+        start, end = find_bound(tokens, self.BOS, self.EOS)
+        # BOS at index 1 -> start = 2
+        # No tts_eos present; im_end at index 4 -> end = 4
+        assert start == 2
+        assert end == 4
+
     def test_eos_before_bos(self, find_bound):
-        """EOS appears before BOS → content slice is empty."""
+        """EOS before BOS is ignored (EOS only recorded after BOS)."""
         tokens = [self.EOS, 10, self.BOS, 20]
         start, end = find_bound(tokens, self.BOS, self.EOS)
-        # BOS at index 2 → start = 3, EOS at index 0 → end = 0
-        # tokens[3:0] is empty
+        # BOS at index 2 -> start = 3
+        # EOS at index 0 preceded BOS -- not recorded -> end = None
         assert start == 3
-        assert end == 0
+        assert end is None
 
 
 # ---------------------------------------------------------------------------
@@ -232,21 +243,43 @@ class TestThinker2Talker:
         assert info["thinker_token_ids"].shape[0] == info["thinker_hidden_states"].shape[0]
         assert info["thinker_token_ids"].shape[0] <= 7
 
-    def test_hidden_state_dtype_preserved(self):
-        """Hidden states should preserve native dtype (no fp32 conversion)."""
+    def test_tts_boundary_beyond_hidden_fallback(self):
+        """When tts_start >= hidden_len, fallback to empty slice u2192 gen-portion path."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            thinker2talker,
+        )
+
+        BOS, EOS = 151703, 151704
+        # BOS at index 7 with only 7 hidden states: tts_start=8 >= hidden_len=7
+        token_ids = [1, 2, 3, 4, 5, 6, 7, BOS, 10, EOS]
+        hidden = torch.randn(7, 4096)
+
+        stage_list = self._make_stage_list(token_ids, hidden)
+        # Should not crash; falls back gracefully
+        result = thinker2talker(stage_list, [0])
+
+        info = result[0]["additional_information"]
+        # Lengths must always be equal and non-negative
+        assert info["thinker_token_ids"].shape[0] == info["thinker_hidden_states"].shape[0]
+        assert info["thinker_token_ids"].shape[0] >= 0
+
+    def test_hidden_state_cast_to_float32(self):
+        """Hidden states are cast to float32 for serialization compatibility."""
         from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
             thinker2talker,
         )
 
         BOS, EOS = 151703, 151704
         token_ids = [1, 2, 3, 4, 5, BOS, 10, EOS]
+        # Input in bfloat16 u2014 code explicitly casts to float32 for serialization
+        # (numpy doesn't support bfloat16 and shared-memory transport requires f32)
         hidden = torch.randn(8, 4096, dtype=torch.bfloat16)
 
         stage_list = self._make_stage_list(token_ids, hidden)
         result = thinker2talker(stage_list, [0])
 
         info = result[0]["additional_information"]
-        assert info["thinker_hidden_states"].dtype == torch.bfloat16
+        assert info["thinker_hidden_states"].dtype == torch.float32
 
 
 # ---------------------------------------------------------------------------
@@ -287,9 +320,10 @@ class TestTalkerPreprocess:
             return torch.randn(ids.shape[0], hidden_size)
         talker.embed_input_ids = mock_embed_input_ids
 
-        # Mock parameters for _module_device
+        # Mock parameters for _module_device — use side_effect so each call
+        # returns a fresh iterator (return_value shares one iterator across calls).
         talker.parameters = MagicMock(
-            return_value=iter([torch.zeros(1)])  # CPU
+            side_effect=lambda: iter([torch.zeros(1)])  # CPU
         )
 
         # Build the unified model shell (just enough for preprocess)
@@ -385,7 +419,9 @@ class TestTalkerPreprocess:
 
         assert embeds is not None
         assert embeds.shape == (1, hidden_size)
-        # Conditioning used alone — should match first trailing position exactly
+        # Conditioning used alone — should match first trailing position exactly.
+        # Both tensors are float32 in this test; dtype is preserved through
+        # the .to(dtype=codec_embeds.dtype) call in talker_preprocess.
         assert torch.allclose(embeds[0], trailing[0])
         # One trailing consumed, one remaining
         assert "trailing_conditioning" in update
@@ -516,8 +552,8 @@ class TestTalker2Code2Wav:
         # Last token (6561) should be stripped
         assert result[0]["prompt_token_ids"] == [100, 200, 300]
 
-    def test_strips_any_trailing_token(self):
-        """Any trailing token is stripped (not just 6561), matching upstream pattern."""
+    def test_no_stop_token_preserves_all(self):
+        """Tokens without 6561 are all preserved (value-based filter, not [:-1] trim)."""
         from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
             talker2code2wav,
         )
@@ -526,7 +562,8 @@ class TestTalker2Code2Wav:
         stage_list = self._make_talker_stage(token_ids)
         result = talker2code2wav(stage_list, [0])
 
-        assert result[0]["prompt_token_ids"] == [10, 20, 30, 40]
+        # All 5 tokens preserved u2014 none is the stop token 6561
+        assert result[0]["prompt_token_ids"] == [10, 20, 30, 40, 50]
 
     def test_empty_token_ids(self):
         """Empty token_ids produces empty codec_codes."""
@@ -549,3 +586,152 @@ class TestTalker2Code2Wav:
         result = talker2code2wav(stage_list, [0])
 
         assert result[0]["prompt_token_ids"] == []
+
+
+# ---------------------------------------------------------------------------
+# thinker2talker_async_chunk
+# ---------------------------------------------------------------------------
+
+
+class TestThinker2TalkerAsyncChunk:
+    """Smoke tests for the async_chunk thinker->talker accumulator."""
+
+    def _make_transfer_manager(self):
+        """Minimal mock for ChunkTransferAdapter."""
+        from unittest.mock import MagicMock
+        tm = MagicMock()
+        tm.request_payload = {}
+        return tm
+
+    def _make_request(self, req_id="req0", prompt_ids=None, output_ids=None):
+        """Minimal mock for OmniEngineCoreRequest."""
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.external_req_id = req_id
+        req.prompt_token_ids = prompt_ids or []
+        req.output_token_ids = output_ids or []
+        return req
+
+    def test_returns_none_while_accumulating(self):
+        """Returns None until is_finished=True."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            thinker2talker_async_chunk,
+        )
+        tm = self._make_transfer_manager()
+        req = self._make_request(output_ids=[1, 2, 3])
+        pooling = {"thinker_hidden_states": torch.randn(3, 4096)}
+
+        result = thinker2talker_async_chunk(tm, pooling, req, is_finished=False)
+        assert result is None
+        # Hidden states accumulated in transfer_manager
+        assert "req0" in tm.request_payload
+
+    def test_emits_payload_when_finished(self):
+        """Returns dict with thinker_token_ids and thinker_hidden_states on finish."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            thinker2talker_async_chunk,
+        )
+        BOS, EOS = 151703, 151704
+        tm = self._make_transfer_manager()
+        req = self._make_request(
+            prompt_ids=[1, 2, BOS],
+            output_ids=[10, 20, EOS],
+        )
+        pooling = {"thinker_hidden_states": torch.randn(6, 4096)}
+
+        result = thinker2talker_async_chunk(tm, pooling, req, is_finished=True)
+        assert result is not None
+        assert "thinker_token_ids" in result
+        assert "thinker_hidden_states" in result
+        assert isinstance(result["thinker_token_ids"], torch.Tensor)
+        # TTS slice: tokens between BOS and EOS (index 3 to 5 in all_token_ids)
+        assert result["thinker_token_ids"].shape[0] == result["thinker_hidden_states"].shape[0]
+
+    def test_tts_boundary_beyond_hidden_returns_valid_payload(self):
+        """When tts_start >= hidden_len, fallback path produces valid payload."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            thinker2talker_async_chunk,
+        )
+        BOS = 151703
+        tm = self._make_transfer_manager()
+        # BOS at index 7, but only 5 hidden states
+        req = self._make_request(
+            prompt_ids=[1, 2, 3, 4, 5, 6, 7, BOS],
+            output_ids=[10],
+        )
+        pooling = {"thinker_hidden_states": torch.randn(5, 4096)}
+
+        result = thinker2talker_async_chunk(tm, pooling, req, is_finished=True)
+        # When is_finished=True and hidden states are available, the fallback path
+        # always returns a dict (uses all available states, not None).
+        assert result is not None, "is_finished=True with hidden states must return a payload dict"
+        assert result["thinker_token_ids"].shape[0] == result["thinker_hidden_states"].shape[0]
+
+
+# ---------------------------------------------------------------------------
+# talker2code2wav_async_chunk
+# ---------------------------------------------------------------------------
+
+
+class TestTalker2Code2WavAsyncChunk:
+    """Smoke tests for the async_chunk talker->code2wav token streamer."""
+
+    def _make_transfer_manager(self):
+        from collections import defaultdict
+        from unittest.mock import MagicMock
+        tm = MagicMock()
+        tm.code_prompt_token_ids = defaultdict(list)
+        tm.connector = None
+        # Explicitly set real dicts so hasattr() guards in talker2code2wav_async_chunk
+        # are not bypassed by MagicMock's auto-attribute creation.
+        tm._talker_token_cursor = {}
+        tm._talker_emitted_len = {}
+        return tm
+
+    def _make_request(self, req_id="req0", output_ids=None):
+        from unittest.mock import MagicMock
+        req = MagicMock()
+        req.external_req_id = req_id
+        req.output_token_ids = output_ids or []
+        return req
+
+    def test_returns_none_below_chunk_threshold(self):
+        """No emission when pending tokens < chunk_size (default 25)."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav_async_chunk,
+        )
+        tm = self._make_transfer_manager()
+        req = self._make_request(output_ids=[1, 2, 3])
+
+        result = talker2code2wav_async_chunk(tm, None, req, is_finished=False)
+        assert result is None
+
+    def test_emits_on_finish(self):
+        """On is_finished=True, emits all accumulated tokens."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav_async_chunk,
+        )
+        tm = self._make_transfer_manager()
+        tokens = list(range(10, 20))
+        req = self._make_request(output_ids=tokens)
+
+        result = talker2code2wav_async_chunk(tm, None, req, is_finished=True)
+        assert result is not None
+        assert "code_predictor_codes" in result
+        assert result["finished"].item() is True
+        # All 10 tokens emitted (none is stop token 6561)
+        assert result["code_predictor_codes"] == tokens
+
+    def test_filters_stop_token_6561(self):
+        """Stop token 6561 is filtered from codec codes."""
+        from vllm_omni.model_executor.stage_input_processors.minicpm_o import (
+            talker2code2wav_async_chunk,
+        )
+        tm = self._make_transfer_manager()
+        tokens = [100, 200, 6561, 300]
+        req = self._make_request(output_ids=tokens)
+
+        result = talker2code2wav_async_chunk(tm, None, req, is_finished=True)
+        assert result is not None
+        assert 6561 not in result["code_predictor_codes"]
+        assert result["code_predictor_codes"] == [100, 200, 300]

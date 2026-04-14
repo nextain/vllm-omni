@@ -1849,6 +1849,19 @@ def assert_omni_response(response: OmniResponse, request_config: dict[str, Any],
 
     modalities = request_config.get("modalities", ["text", "audio"])
 
+    # core_model: verify pipeline produced expected output type (even with dummy weights)
+    if run_level == "core_model":
+        if "audio" in modalities:
+            assert response.audio_content is not None, (
+                "Audio pipeline produced no audio output. "
+                "Check that Code2Wav stage ran and make_omni_output returned audio tensors."
+            )
+        if "text" in modalities:
+            assert response.text_content is not None, (
+                "Text pipeline produced no text output. "
+                "Check that Thinker stage ran and produced detokenized text."
+            )
+
     if run_level == "advanced_model":
         if "audio" in modalities:
             assert response.audio_content is not None, "No audio output is generated"

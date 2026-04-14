@@ -34,7 +34,8 @@ class OmniRealtimeConnection(RealtimeConnection):
         self._audio_buffer: list[bytes] = []  # Accumulated PCM16 audio chunks
         self._response_task: asyncio.Task | None = None
         self._system_prompt: str | None = None
-        self._conversation_history: list[dict] = []  # Multi-turn context (TODO: sliding window)
+        self._conversation_history: list[dict] = []  # Multi-turn context; bounded to _MAX_HISTORY_TURNS
+        self._MAX_HISTORY_TURNS = 20  # Keep last 20 user/assistant exchange pairs (40 entries)
         self._session_config: dict = {}  # Store other session parameters
     
     async def handle_event(self, event: dict) -> None:
@@ -87,7 +88,6 @@ class OmniRealtimeConnection(RealtimeConnection):
         if self._response_task and not self._response_task.done():
             return  # Ignore if response already in progress
         if not self._audio_buffer:
-            await self.send(ResponseCreated())
             await self.send_error("No audio input provided")
             await self.send(ResponseDone())
             return
@@ -213,6 +213,10 @@ class OmniRealtimeConnection(RealtimeConnection):
             {"role": "user", "content": "[audio input]"}
         )
         self._conversation_history.append({"role": "assistant", "content": full_text})
+        # Enforce sliding window: keep only the last N exchange pairs (2 entries each)
+        max_entries = self._MAX_HISTORY_TURNS * 2
+        if len(self._conversation_history) > max_entries:
+            self._conversation_history = self._conversation_history[-max_entries:]
         await self.send(ResponseAudioTranscriptDone(transcript=full_text))
         await self.send(ResponseAudioDone())
         await self.send(ResponseDone())
