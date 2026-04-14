@@ -220,3 +220,5 @@ Naia OS는 공식 프레임워크의 유지보수 혜택을 받으면서, 오픈
 10. **Talker sampling params 맞춰야 함** — top_p, top_k, temperature 멀슰 시 stop token 6561 생성 안 됨 → 323초 gibberish.
 11. **final_res는 항상 None** — serving_chat.py 스코프에서 할당 안 됨. 로그 경로 None guard 필수.
 12. **two-choice design은 OpenAI spec 위반** — n>1 시 choices 개수 != n. sequential renumber는 workaround; 근본은 upstream 설계 변경 필요.
+13. **CosyVoice2 codec 프레임 레이트는 25fps (40ms/frame, 24kHz 출력)** — 25 new frames = 1초 오디오(left-context 트리밍 후). 트리밍 없으면 2초/chunk. 40 chunks × 1s = 40s는 정상 동작 (max_tokens=1000 도달).
+14. **left_context_size async_chunk 데이터 흐름 확인** — Request.additional_information → OmniCachedRequestData → _update_additional_information → model_intermediate_buffer → runtime_additional_information → forward(). 전체 경로 검증 완료.

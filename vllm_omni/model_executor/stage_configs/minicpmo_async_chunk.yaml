@@ -131,7 +131,8 @@ runtime:
     connector_of_shared_memory:
       name: SharedMemoryConnector
       extra:
-        # 25 codec frames per chunk (≈ 400ms audio at 16kHz/16ms per frame).
-        # Left context prevents boundary artifacts in Code2Wav decoding.
+        # 25 codec frames per chunk (CosyVoice2: 25fps / 40ms per frame = 1000ms AFTER
+        # left-context trimming: 50 total frames → 2s raw, trimmed to 25 new = 1s/chunk).
+        # Left context prevents boundary artifacts in CosyVoice2 flow decoding.
         codec_chunk_frames: 25
         codec_left_context_frames: 25
