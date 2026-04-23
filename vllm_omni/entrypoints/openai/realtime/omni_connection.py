@@ -208,15 +208,12 @@ class OmniRealtimeConnection(RealtimeConnection):
             await self.send(ResponseDone())
             return
 
-        # Compact history: replace large audio payload with placeholder
-        self._conversation_history.append(
-            {"role": "user", "content": "[audio input]"}
-        )
-        self._conversation_history.append({"role": "assistant", "content": full_text})
-        # Enforce sliding window: keep only the last N exchange pairs (2 entries each)
-        max_entries = self._MAX_HISTORY_TURNS * 2
-        if len(self._conversation_history) > max_entries:
-            self._conversation_history = self._conversation_history[-max_entries:]
+        # NOTE: Multi-turn history accumulation disabled.
+        # Storing "[audio input]" text placeholders for audio turns confuses the model
+        # on subsequent turns — it sees the literal string "[audio input]" as prior user
+        # speech, causing incorrect responses and degraded TTS audio quality.
+        # Proper multi-turn support requires transcribing user audio turns (ASR) before
+        # storing them in history. Until then, each turn is processed independently.
         await self.send(ResponseAudioTranscriptDone(transcript=full_text))
         await self.send(ResponseAudioDone())
         await self.send(ResponseDone())
