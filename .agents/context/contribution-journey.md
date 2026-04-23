@@ -226,3 +226,41 @@ vllm_omni/model_executor/stage_configs/minicpmo.yaml
 examples/online_serving/minicpm_o/conversation_benchmark.py
 examples/online_serving/minicpm_o/voicebench_runner.py
 ```
+
+---
+
+## Phase 11: naia-os /v1/realtime 연동 + multi-turn fix (2026-04-23)
+
+### Background
+
+naia-os `minicpm-o.ts`를 `/v1/omni` → `/v1/realtime` 마이그레이션 후 실제 테스트에서 발견된 서버 버그 수정.
+
+### Findings
+
+**Critical: `server_vad` 미구현**
+- `session.update`의 `turn_detection: {type: "server_vad"}` 필드는 `_session_config`에 저장만 되고 VAD 로직 없음
+- `_start_response()`는 `input_audio_buffer.commit` 또는 `response.create` 이벤트로만 트리거
+- 검증: Python 테스트 (server_vad 설정 후 commit 없이 오디오 스트리밍 → 10초 타임아웃 무응답)
+- 결론: naia-os 클라이언트는 반드시 explicit commit 사용해야 함
+
+**Critical: multi-turn history 버그 (`fd273bdc`)**
+- `_conversation_history`에 `{"role": "user", "content": "[audio input]"}` 저장
+- Turn 2 요청 시 모델이 이 텍스트를 실제 사용자 발화로 오해 → 잘못된 응답 + TTS 노이즈 (RMS 0.0096 vs 정상 0.1290)
+- Turn 2 응답 시간 0.78s (정상 5-6초) → 모델이 오디오 컨텍스트를 처리 못하고 단답 반환
+- Fix: 히스토리 누적 비활성화. 각 턴 독립 처리. 올바른 멀티턴 구현은 ASR 기반 사용자 발화 텍스트 저장 필요 (future work)
+
+### Lessons learned (추가)
+
+15. **server_vad는 선언이지 구현이 아님** — `session.update`에서 `turn_detection: server_vad`를 수락해도 동작하지 않음. 항상 explicit commit 사용. qwen3_omni realtime client도 동일 패턴.
+16. **history placeholder가 멀티모달 모델 혼란 유발** — 오디오 입력을 텍스트 플레이스홀더로 대체하면 모델이 이전 턴 컨텍스트를 잘못 해석. 오디오 히스토리 보존에는 ASR 선행 필요.
+17. **omni_connection.py는 배치 처리 전용** — streaming_prefill / streaming_generate 미사용. 진짜 full-duplex는 별도 구현 필요.
+
+### naia-os side
+
+브랜치 `issue-219-minicpm-realtime` (nextain/naia-os), 커밋:
+- `0b822a16` feat(voice): migrate minicpm-o to OpenAI Realtime API
+- `96c99375` refactor(voice): simplify audio delta path
+- `7fc8765f` fix(voice): mic gate race + session.update gaps (#230)
+- `6fd1b7c9` fix(voice): restore client VAD + explicit commit
+
+naia-os #219 PR 대기 상태.

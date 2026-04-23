@@ -153,7 +153,7 @@ Input (text + image/audio)
 | WebSocket /v1/realtime | ✅ E2E PASS | OpenAI Realtime API — audio in → transcript + audio out, TTFP 0.61s |
 | ~~WebSocket /v1/omni~~ | 🗑️ 제거됨 (#4) | 독자 규격 → ref/omni_duplex_v1/ 에 보관 |
 
-### /v1/realtime Implementation (2026-04-08)
+### /v1/realtime Implementation (2026-04-08, updated 2026-04-23)
 
 - `realtime/serving.py`: upstream `OpenAIServingRealtime` 상속 (pass-through)
 - `realtime/protocol.py`: omni 전용 이벤트 (ResponseCreate, ResponseAudioDelta 등)
@@ -161,8 +161,21 @@ Input (text + image/audio)
 - `realtime/omni_connection.py`: full audio conversation loop
   - PCM16 → WAV → audio_url data URI → ChatCompletionRequest (stream=True) → SSE → WebSocket events
   - engine abort on cancel/disconnect
-  - history compaction (audio → placeholder)
+  - ~~history compaction (audio → placeholder)~~ → **disabled 2026-04-23** (`fd273bdc`)
+    - `[audio input]` text placeholder in history caused model confusion on Turn 2+
+    - Turn 2 produced wrong transcript + RMS 0.0096 near-silent TTS audio
+    - Each turn now processed independently; multi-turn context deferred to proper ASR-based history
 - 9-pass adversarial review, 2 consecutive clean
+
+### Protocol contract (validated 2026-04-23)
+
+- **explicit commit only** — `input_audio_buffer.commit` triggers `_start_response()`
+- `server_vad` field accepted in `session.update` but NOT implemented — clients must use client-side VAD + explicit commit
+- Pattern confirmed by `qwen3_omni/openai_realtime_client.py` (upstream reference)
+- Known issues:
+  - async_chunk yaml produces noise audio (regression, sync yaml clean)
+  - Multi-turn context disabled (needs ASR-based solution)
+  - No server-side streaming_prefill / streaming_generate (batch mode only)
 
 ## Completed Work (2026-04-08)
 
@@ -176,8 +189,9 @@ Input (text + image/audio)
 
 | Issue | 내용 | 상태 |
 |-------|------|:----:|
-| nextain/naia-os#219 | minicpm-o.ts /v1/realtime 전환 | 🔜 |
+| nextain/naia-os#219 | minicpm-o.ts /v1/realtime 전환 | ✅ 구현 완료, PR 대기 |
 | nextain/naia-os#220 | Silero ONNX VAD 교체 | 🔜 |
+| nextain/naia-os#230 | flow stability — mic gate + session.update | ✅ |
 
 ## 방향 원칙 (2026-04-07 재확인)
 
@@ -208,7 +222,7 @@ Input (text + image/audio)
 | realtime/serving.py | ✅ | upstream pass-through subclass |
 | realtime/protocol.py | ✅ | omni events, OpenAIBaseModel |
 | realtime/connection.py | ✅ | upstream re-export |
-| realtime/omni_connection.py | ✅ | 9-pass adversarial review, 2 consecutive clean |
+| realtime/omni_connection.py | ✅ | 9-pass adversarial review, 2 consecutive clean. Multi-turn history disabled 2026-04-23 (fd273bdc) |
 | offline_inference/minicpm_o/end2end.py | ✅ | 8-pass adversarial review; SamplingParams aligned |
 | offline_inference/minicpm_o/end2end_async_chunk.py | ✅ | 8-pass review; init_timeout, use_image_audio added |
 | offline_inference/minicpm_o/run_*.sh | ✅ | File existence checks, PROMPTS_FILE variable reuse |
