@@ -128,6 +128,27 @@ upstream 기여를 통해 Naia OS는 공식 유지보수 혜택을 누리면서,
 
 ---
 
+### Phase 11: naia-os `/v1/realtime` 연동 (2026-04-23)
+
+naia-os `minicpm-o.ts`를 `/v1/omni` → `/v1/realtime`로 마이그레이션. `server_vad` 미구현(선언만 존재) + multi-turn history 버그(`fd273bdc`로 비활성화) 발견.
+자세한 내용은 `.agents/contribution-journey.md` Phase 11 참조.
+
+---
+
+### Phase 12: archive `/v1/omni` 부활 시도와 revert (2026-04-25)
+
+demo (`MiniCPM-o-Demo-forvLLM-omni`)와 naia-os의 streaming audio output을 위해 archive `/v1/omni` (`4b4f351e`로 폐기됨) 부활 시도 → smoke 1-turn PASS.
+
+**잘못된 가정**: lesson 17의 "배치 처리 전용"을 audio output WS streaming 미지원으로 misread.
+
+**Plan + Explore agent cross-review에서 발견된 사실**: omni_connection.py가 매 SSE chunk를 즉시 `ResponseAudioDelta`로 forward — chunk-by-chunk streaming. lesson 17은 model API layer (`model.duplex.streaming_prefill / streaming_generate` 미사용)이지 transport layer가 아님. archive `/v1/omni`도 동일한 model batch path 사용 → 기능적 동등 + redundant.
+
+**결정**: revert. demo는 `/v1/realtime` (OpenAI Realtime spec, naia-os production path) 사용. 폐기 commit `4b4f351e`의 결정("Remove /v1/omni proprietary endpoint")이 옳음.
+
+**새 lessons**: 18 (layer 명시 — model API vs WS), 19 (archive 부활 전 cross-review 강제), 20 (fork-only marker file/commit 둘 다). 자세한 내용은 `.agents/contribution-journey.md` Phase 12.
+
+---
+
 ## 핵심 upstream 발견사항
 
 ### vllm-omni 내부에 대해 발견한 것들
