@@ -223,6 +223,9 @@ datasets/
 *.csv
 *.json
 !apps/ComfyUI-vLLM-Omni/example_workflows/*.json
+!examples/online_serving/minicpm_o/ts-client/package.json
+!examples/online_serving/minicpm_o/ts-client/package-lock.json
+!examples/online_serving/minicpm_o/ts-client/tsconfig.json
 *.jsonl
 *.parquet
 

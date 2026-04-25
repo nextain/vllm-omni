@@ -1,0 +1,20 @@
+{
+	"name": "minicpm-o-realtime-ts-client",
+	"version": "0.1.0",
+	"private": true,
+	"description": "TypeScript reference client + automated E2E for vllm-omni /v1/realtime with MiniCPM-o 4.5. Sibling of realtime_e2e_test.py.",
+	"type": "module",
+	"scripts": {
+		"e2e": "tsx src/e2e-test.ts",
+		"typecheck": "tsc --noEmit"
+	},
+	"dependencies": {
+		"ws": "^8.18.0"
+	},
+	"devDependencies": {
+		"@types/node": "^22.10.0",
+		"@types/ws": "^8.5.13",
+		"tsx": "^4.19.2",
+		"typescript": "^5.7.2"
+	}
+}
